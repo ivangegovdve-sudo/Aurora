@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,6 +37,22 @@ float3 linearTosRGB(float3 color)
     float3 sq3 = sqrt(sq2);
 
     return 0.662002687f * sq1 + 0.684122060f * sq2 - 0.323583601f * sq3 - 0.0225411470f * color;
+}
+
+// Converts a linear RGB color to YCoCg (luma / orange-chroma / green-chroma).
+float3 RGBtoYCoCg(float3 c)
+{
+    return float3(
+        0.25f * c.r + 0.5f * c.g + 0.25f * c.b,
+        0.5f * c.r - 0.5f * c.b,
+        -0.25f * c.r + 0.5f * c.g - 0.25f * c.b);
+}
+
+// Converts a YCoCg color back to linear RGB. Exact inverse of RGBtoYCoCg above.
+float3 YCoCgtoRGB(float3 c)
+{
+    float t = c.x - c.z;
+    return float3(t + c.y, c.x + c.z, t - c.y);
 }
 
 // Applies the ACES filmic tone mapping curve to the color.

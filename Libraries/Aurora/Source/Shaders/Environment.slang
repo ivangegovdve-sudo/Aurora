@@ -27,9 +27,7 @@ struct Environment
     SamplerState sampler;
     Texture2D<float4> lightTexture;
 
-#if DIRECTX
     StructuredBuffer<AliasEntry> aliasMap;
-#endif
 };
 
 // Computes UV coordinates for an image from a direction. The image is assumed to have lat-long
@@ -140,7 +138,6 @@ float3 sampleEnvironment(Environment environment, float2 random, out float3 L, o
 {
     // Sample the environment as either a texture or a gradient.
     EnvironmentConstants constants = environment.constants;
-#if DIRECTX
     if (constants.hasLightTex)
     {
         // Get the textures dimensions and texel count.
@@ -173,7 +170,6 @@ float3 sampleEnvironment(Environment environment, float2 random, out float3 L, o
         return environment.lightTexture.Load(xy).rgb;
     }
     else
-#endif
     {
         // Uniformly sample a direction.
         L = sampleUniformDirection(random, pdf);

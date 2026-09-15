@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+#ifndef __GROUND_PLANE_H__
+#define __GROUND_PLANE_H__
 
 #include "BSDFCommon.slang"
 #include "Colors.slang"
@@ -192,3 +194,99 @@ int setupGroundPlaneRay(float3 hitPosition, GroundPlane groundPlane, RaytracingA
     return CAMERA_RAY;
 }
 
+// Write denoising/temporal guide AOVs and NDC depth for ground plane hit.
+// TODO: Vulkan support.
+void writeGroundPlaneGuideAOVs(float3 groundPlanePosition)
+{
+#if DIRECTX
+    uint2 screenCoords = DispatchRaysIndex().xy;
+
+    if (gFrameData.isDenoisingAOVsEnabled)
+    {
+        float viewZ = computeViewZ(gFrameData.cameraInvView, groundPlanePosition);
+        gDepthView[screenCoords] = viewZ;
+
+        // Match minimum roughness as denoiser handles near-zero roughness poorly.
+        float roughness = max(gGroundPlane.reflectionRoughness, 0.05f);
+#if ENABLE_NRD
+        gNormalRoughness[screenCoords] =
+            NRD_FrontEnd_PackNormalAndRoughness(gGroundPlane.normal, roughness, 0.0f);
+#else
+        gNormalRoughness[screenCoords] = float4(gGroundPlane.normal * 0.5f + 0.5f, roughness);
+#endif
+        gGuideNormalRoughness[screenCoords] = float4(gGroundPlane.normal, roughness);
+        gBaseColorMetalness[screenCoords]   = float4(gGroundPlane.reflectionColor, 0.0f);
+        gMotionVectors[screenCoords]        = computeMotionVector(groundPlanePosition, viewZ);
+    }
+
+    // Store NDC depth for upsampling for upscaling.
+    if (gFrameData.isDepthNDCEnabled)
+    {
+        float4 positionClip = mul(gFrameData.cameraViewProj, float4(groundPlanePosition, 1.0f));
+        float depthNDC      = (positionClip.z / positionClip.w + 1.0f) / 2.0f;
+        if (gSampleData.sampleIndex == 0 || depthNDC < gDepthNDC[screenCoords])
+        {
+            gDepthNDC[screenCoords] = depthNDC;
+        }
+    }
+#endif // DIRECTX
+}
+
+bool evaluateGroundPlane(
+    inout InstanceRayPayload rayPayload, float3 rayOrigin, float3 rayDirection, Environment environment)
+{
+#if !DIRECTX
+    // XXX: Vulkan does not support ground plane.
+    return false;
+#else
+    const bool onlyOpaqueShadowHits = gFrameData.isForceOpaqueShadowsEnabled;
+    const int maxTraceDepth = gFrameData.traceDepth;
+
+    float3 groundPlanePosition = 0;
+    float groundPlaneDistance = INFINITY;
+    if (rayPayload.isPrimaryRay
+        && gGroundPlane.enabled
+        && intersectGroundPlane(gGroundPlane, rayOrigin, rayDirection, groundPlanePosition, groundPlaneDistance)
+        && groundPlaneDistance < RayTCurrent())
+    {
+        float3 groundPlaneRayDirection;
+        float3 groundPlaneRayOrigin;
+        float3 groundPlaneRayColor;
+
+        // Shade the ground plane.
+        int groundPlaneRayType = setupGroundPlaneRay(groundPlanePosition, gGroundPlane, gScene, environment, rayOrigin, rayDirection,
+                onlyOpaqueShadowHits, maxTraceDepth, rayPayload.rng,
+                groundPlaneRayDirection, groundPlaneRayOrigin, groundPlaneRayColor);
+
+        if (groundPlaneRayType == GROUND_PLANE_REFLECTION_RAY)
+        {
+            // Write guide AOVs before returning to prevent stale data and zero motion vectors.
+            writeGroundPlaneGuideAOVs(groundPlanePosition);
+
+            // The ground plane reflection path was selected, continue the path as a reflection ray.
+            rayPayload.nextRayType = GROUND_PLANE_REFLECTION_RAY;
+
+            // Setup the next ray direction, origin and contribution from ground plane.
+            rayPayload.rayContribution *= groundPlaneRayColor;
+            rayPayload.nextRayDirection = groundPlaneRayDirection;
+            rayPayload.nextRayOrigin = groundPlaneRayOrigin;
+
+            // This ray is no longer a primary ray.
+            rayPayload.isPrimaryRay = false;
+
+            // The ray was absorbed.
+            return true;
+        }
+        else
+        {
+            // If the ray was not absorbed scale the contribution based on ground plane color.
+            rayPayload.rayContribution *= groundPlaneRayColor;
+        }
+    }
+
+    // Ray was not absorbed.
+    return false;
+#endif // !DIRECTX
+}
+
+#endif // __GROUND_PLANE_H__

@@ -38,6 +38,12 @@ bool PTMaterial::update()
     // Run the type-specific update function on this material.
     definition()->updateFunction()(*this);
 
+    // Early return if uniform buffer is empty.
+    if (uniformBuffer().size() == 0)
+    {
+        return true;
+    }
+
     // Create a transfer buffer for the material data if it doesn't already exist.
     if (!_constantBuffer.size)
     {

@@ -83,6 +83,19 @@ HGIRenderer::~HGIRenderer()
     _pAccumulationTex.reset();
     _sampler.reset();
 
+    // Flush deferred resource deletions before destroying HGI device.
+    if (_hgi)
+    {
+        _hgi->GarbageCollect();
+        for (int i = 0; i < 4; i++)
+        {
+            _hgi->StartFrame();
+            _hgi->GarbageCollect();
+            _hgi->EndFrame();
+            _hgi->GarbageCollect();
+        }
+    }
+
     // Destroy the HGI device.
     _hgi.reset();
 }
@@ -158,6 +171,27 @@ void HGIRenderer::createResources()
     if(hgi()->GetAPIName() == HgiTokens->Metal) {
         shaderDeclarations = "#define MTL_TRANSLATE_GLSL\n";
     }
+#else
+    // Uniform block structs for Hgi shader generation. These must match the PostProcessing 
+    // and SampleData structs uploaded to UBOs. Using Hgi's API ensures proper descriptor 
+    // set layout generation for Vulkan pipelines.
+    const string postProcessDeclarations = R"(
+struct PostProcessingUbo {
+    vec3 brightness;
+    int debugMode;
+    vec2 range;
+    bool isDenoisingEnabled;
+    bool isToneMappingEnabled;
+    bool isGammaCorrectionEnabled;
+    bool isAlphaEnabled;
+};
+)";
+    const string accumDeclarations = R"(
+struct SampleDataUbo {
+    int sampleIndex;
+    int seedOffset;
+};
+)";
 #endif
 
     // Description of shader function for post-processing compute shader.
@@ -174,6 +208,8 @@ void HGIRenderer::createResources()
     postProcessComputeDesc.computeDescriptor.localSize = GfVec3i(8, 8, 1);
 #if defined(__APPLE__)
     postProcessComputeDesc.shaderCodeDeclarations      = shaderDeclarations.c_str();
+#else
+    postProcessComputeDesc.shaderCodeDeclarations      = postProcessDeclarations.c_str();
 #endif
 
     // Use the HGI code generation to add shader inputs to post-processing shader function.
@@ -194,6 +230,7 @@ void HGIRenderer::createResources()
     //        bool isGammaCorrectionEnabled;
     //        bool isAlphaEnabled;
     //    } gSettings;
+#if defined(__APPLE__)
     HgiShaderFunctionAddConstantParam(&postProcessComputeDesc, "gSettings_brightness", "vec3");
     HgiShaderFunctionAddConstantParam(&postProcessComputeDesc, "gSettings_debugMode", "int");
     HgiShaderFunctionAddConstantParam(&postProcessComputeDesc, "gSettings_range", "vec2");
@@ -201,6 +238,11 @@ void HGIRenderer::createResources()
     HgiShaderFunctionAddConstantParam(&postProcessComputeDesc, "gSettings_isToneMappingEnabled", "bool");
     HgiShaderFunctionAddConstantParam(&postProcessComputeDesc, "gSettings_isGammaCorrectionEnabled", "bool");
     HgiShaderFunctionAddConstantParam(&postProcessComputeDesc, "gSettings_isAlphaEnabled", "bool");
+#else
+    // Buffer index 0; Hgi shifts textures to start after last buffer.
+    HgiShaderFunctionAddBuffer(&postProcessComputeDesc, "gSettings", "PostProcessingUbo",
+        /*bindIndex = */ 0, HgiBindingTypeUniformValue);
+#endif
 
     // Create post-processing shader function, abort application if compilation fails.
     _postProcessComputeShader = HgiShaderFunctionHandleWrapper::create(
@@ -227,13 +269,15 @@ void HGIRenderer::createResources()
     accumComputeDesc.shaderByteCodeLength        = HGIMetalLib::g_sAuroraMetalLib.size();
     accumComputeDesc.shaderByteCode              = HGIMetalLib::g_sAuroraMetalLib.data();
 #else
-    accumComputeDesc.shaderCode                  = HGIShaders::g_sPostProcessing.c_str();
+    accumComputeDesc.shaderCode                  = HGIShaders::g_sAccumulation.c_str();
 #endif
     accumComputeDesc.debugName                   = "computeEntryPointAccumulation";
     accumComputeDesc.shaderStage                 = HgiShaderStageCompute;
     accumComputeDesc.computeDescriptor.localSize = GfVec3i(8, 8, 1);
 #if defined(__APPLE__)
     accumComputeDesc.shaderCodeDeclarations      = shaderDeclarations.c_str();
+#else
+    accumComputeDesc.shaderCodeDeclarations      = accumDeclarations.c_str();
 #endif
 
     // Use the HGI code generation to add shader inputs to accumulation shader function.
@@ -249,8 +293,13 @@ void HGIRenderer::createResources()
     //        int sampleIndex;
     //        int seedOffset;
     //    } gSampleData;
+#if defined(__APPLE__)
     HgiShaderFunctionAddConstantParam(&accumComputeDesc, "gSampleData_sampleIndex", "int");
     HgiShaderFunctionAddConstantParam(&accumComputeDesc, "gSampleData_seedOffset", "int");
+#else
+    HgiShaderFunctionAddBuffer(&accumComputeDesc, "gSampleData", "SampleDataUbo",
+        /*bindIndex = */ 0, HgiBindingTypeUniformValue);
+#endif
 
     // Create accumulation shader function, abort application if compilation fails.
     _accumComputeShader = HgiShaderFunctionHandleWrapper::create(
@@ -306,7 +355,11 @@ void HGIRenderer::createResources()
 
     // Create binding description for sample data UBO.
     HgiBufferBindDesc bufferDesc0;
+#if defined(__APPLE__)
     bufferDesc0.bindingIndex = 3;
+#else
+    bufferDesc0.bindingIndex = 0;
+#endif
     bufferDesc0.buffers      = { _sampleDataUbo->handle() };
     bufferDesc0.offsets      = { 0 };
     bufferDesc0.resourceType = HgiBindResourceTypeUniformBuffer;
@@ -314,7 +367,11 @@ void HGIRenderer::createResources()
 
     // Create binding description for post processing UBO.
     HgiBufferBindDesc bufferDesc1;
+#if defined(__APPLE__)
     bufferDesc1.bindingIndex = 3;
+#else
+    bufferDesc1.bindingIndex = 0;
+#endif
     bufferDesc1.buffers      = { _postProcessingUbo->handle() };
     bufferDesc1.offsets      = { 0 };
     bufferDesc1.resourceType = HgiBindResourceTypeUniformBuffer;
@@ -345,6 +402,8 @@ void HGIRenderer::createResources()
     pipelineDesc.shaderProgram = _accumComputeShaderProgram->handle();
     _accumulationComputePipeline =
         HgiComputePipelineHandleWrapper::create(hgi()->CreateComputePipeline(pipelineDesc), hgi());
+    AU_ASSERT(_accumulationComputePipeline->handle().Get() != nullptr,
+        "Failed to create accumulation compute pipeline.");
 
     // Create compute pipeline for post-processing shader.
     HgiComputePipelineDesc postProcessPipelineDesc;
@@ -352,12 +411,12 @@ void HGIRenderer::createResources()
     postProcessPipelineDesc.shaderProgram = _postProcessComputeShaderProgram->handle();
     _postProcessComputePipeline           = HgiComputePipelineHandleWrapper::create(
         hgi()->CreateComputePipeline(postProcessPipelineDesc), hgi());
+    AU_ASSERT(_postProcessComputePipeline->handle().Get() != nullptr,
+        "Failed to create post-processing compute pipeline.");
 }
 
 IWindowPtr HGIRenderer::createWindow(WindowHandle window, uint32_t width, uint32_t height)
 {
-    // Create dummy window object.
-    // TODO: Support windows (or just remove windows from API)
     return std::make_shared<HGIWindow>(this, window, width, height);
 }
 
@@ -519,6 +578,12 @@ void HGIRenderer::render(uint32_t sampleStart, uint32_t sampleCount)
 
         // End HGI frame rendering.
         hgi()->EndFrame();
+
+        // Present after EndFrame so the presenter records into its own command buffer.
+        if (_pWindow && i == sampleCount - 1)
+        {
+            _pWindow->present();
+        }
     }
 
 }
@@ -542,8 +607,10 @@ void HGIRenderer::setScene(const IScenePtr& pScene)
 
 void HGIRenderer::setTargets(const TargetAssignments& targetAssignments)
 {
-    // Only use kFinal render target currently.
-    _pRenderBuffer = (HGIRenderBuffer*)targetAssignments.at(AOV::kFinal).get();
+    // Only use kFinal render target. Target is either render buffer or a window.
+    ITarget* pFinalTarget = targetAssignments.at(AOV::kFinal).get();
+    _pWindow              = dynamic_cast<HGIWindow*>(pFinalTarget);
+    _pRenderBuffer = _pWindow ? _pWindow->renderBuffer() : static_cast<HGIRenderBuffer*>(pFinalTarget);
     _lstAOVRenderBuffer[0] = targetAssignments.count(AOV::kDepthNDC)       ? (HGIRenderBuffer*)targetAssignments.at(AOV::kDepthNDC).get() : nullptr;
     _lstAOVRenderBuffer[1] = targetAssignments.count(AOV::kMotion)         ? (HGIRenderBuffer*)targetAssignments.at(AOV::kMotion).get() : nullptr;
     _lstAOVRenderBuffer[2] = targetAssignments.count(AOV::kDiffuseAlbedo)  ? (HGIRenderBuffer*)targetAssignments.at(AOV::kDiffuseAlbedo).get() : nullptr;

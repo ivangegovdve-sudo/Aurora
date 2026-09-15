@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,11 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Disable unit test as causes failure in debug mode
-#if _DEBUG
-#define DISABLE_UNIT_TESTS
-#endif
 
 #if !defined(DISABLE_UNIT_TESTS)
 
@@ -490,6 +485,12 @@ TEST_P(LightTest, TestMultipleLights)
                   glm::rotate(static_cast<float>(M_PI * 0.5), glm::vec3(1, 0, 0)) *
                   glm::scale(glm::vec3(50, 50, 50)) },
             { Names::InstanceProperties::kMaterial, kMaterialPath1 } }));
+
+    // Extra samples reduce noise from the four soft-shadowed lights for a more accurate result.
+    setDefaultRendererPathTracingIterations(128);
+
+    // Tight thresholds for the converged reference.
+    setBaselineImageThresholds(0.1f, 0.01f, 0.02f, 0.05f);
 
     // Render the scene and check baseline image.
     ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName(), "Light");

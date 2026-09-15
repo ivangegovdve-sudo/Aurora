@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <adsk:glazing name="ClearSafetypatternCurves_shader" type="surfaceshader">
+    <input name="surface_albedo" type="color3" value="1, 1, 1" colorspace="rec709_display" />
+    <input name="surface_roughness" type="float" output="surface_roughness_map_output" nodegraph="ClearSafetypatternCurves_inputGraph" />
+    <input name="surface_anisotropy" type="float" value="0" />
+    <input name="surface_rotation" type="float" value="0" />
+    <input name="glazing_transmission_color" type="color3" value="0.945277, 0.945277, 0.945277" colorspace="rec709_display" />
+    <input name="glazing_transmission_roughness" type="float" output="glazing_transmission_roughness_map_output" nodegraph="ClearSafetypatternCurves_inputGraph" />
+    <input name="glazing_f0" type="color3" value="0.313304, 0.313304, 0.313304" colorspace="rec709_display" />
+    <input name="glazing_backface_culling" type="boolean" value="true" />
+  </adsk:glazing>
+  <surfacematerial name="ClearSafetypatternCurves" type="material" uiname="Prism-2022">
+    <input name="surfaceshader" type="surfaceshader" nodename="ClearSafetypatternCurves_shader" />
+  </surfacematerial>
+  <nodegraph name="ClearSafetypatternCurves_inputGraph">
+    <adsk:bitmap name="surface_roughness_texture" type="float">
+      <input name="file" type="filename" value="ClearSafetypatternCurves/glazing_safety_pattern_curves.png" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="12, 96" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="surface_roughness_map_output" type="float" nodename="surface_roughness_texture" />
+    <adsk:bitmap name="glazing_transmission_roughness_texture" type="float">
+      <input name="file" type="filename" value="ClearSafetypatternCurves/glazing_safety_pattern_curves.png" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="12, 96" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="glazing_transmission_roughness_map_output" type="float" nodename="glazing_transmission_roughness_texture" />
+  </nodegraph>
+</materialx>

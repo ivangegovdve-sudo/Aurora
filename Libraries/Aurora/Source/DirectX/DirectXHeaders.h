@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -66,6 +66,7 @@ static const size_t SHADER_RECORD_DESCRIPTOR_SIZE = 8; // defined by DirectX 12
 // NVIDIA Real-time Denoisers (NRD) and NRI libraries.
 #include <NRD.h>
 #include <NRDDescs.h>
+#include <NRDSettings.h>
 #include <NRI.h>
 
 // NVIDIA NRI helper interface.
@@ -77,4 +78,4 @@ static const size_t SHADER_RECORD_DESCRIPTOR_SIZE = 8; // defined by DirectX 12
 // NVIDIA NRD integration utility.
 // NOTE: NRI must be included before this.
 #include <NRDIntegration.h>
-#endif
+#endif // ENABLE_DENOISER

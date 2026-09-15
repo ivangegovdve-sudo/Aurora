@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <adsk:layered name="CarbonFiberTwill_shader" type="surfaceshader">
+    <input name="surface_albedo" type="color3" value="1, 1, 1" colorspace="rec709_display" />
+    <input name="surface_roughness" type="float" value="0.0774597" />
+    <input name="surface_anisotropy" type="float" value="0" />
+    <input name="surface_rotation" type="float" value="0" />
+    <input name="layered_f0" type="float" value="0.0602702" />
+    <input name="layered_roughness" type="float" value="0.447214" />
+    <input name="layered_anisotropy" type="float" value="0.95" />
+    <input name="layered_rotation" type="float" output="layered_rotation_map_output" nodegraph="CarbonFiberTwill_inputGraph" />
+    <!-- Slightly blue-grey carbon: real carbon fiber has a cold blue-black tint under
+         the glossy coat, distinguishing it from the olive rubber and teal plastic. -->
+    <input name="layered_diffuse" type="color3" value="0.06, 0.07, 0.12" colorspace="rec709_display" />
+    <input name="layered_bottom_f0" type="color3" output="layered_bottom_f0_map_output" nodegraph="CarbonFiberTwill_inputGraph" />
+    <input name="layered_fraction" type="float" value="0.15" />
+    <input name="layered_fraction_invert" type="boolean" value="true" />
+    <input name="layered_normal" type="vector3" output="layered_normal_map_output" nodegraph="CarbonFiberTwill_inputGraph" />
+  </adsk:layered>
+  <surfacematerial name="CarbonFiberTwill" type="material" uiname="Prism-002">
+    <input name="surfaceshader" type="surfaceshader" nodename="CarbonFiberTwill_shader" />
+  </surfacematerial>
+  <nodegraph name="CarbonFiberTwill_inputGraph">
+    <adsk:bitmap name="layered_rotation_texture" type="float">
+      <input name="file" type="filename" value="CarbonFiberTwill/carbon_fiber_2twill_anisdir.png" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="0.33, 0.33" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="layered_rotation_map_output" type="float" nodename="layered_rotation_texture" />
+    <adsk:bitmap name="layered_bottom_f0_texture" type="color3">
+      <input name="file" type="filename" value="CarbonFiberTwill/carbon_fiber_2twill_spec.png" colorspace="srgb_texture" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="0.33, 0.33" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="layered_bottom_f0_map_output" type="color3" nodename="layered_bottom_f0_texture" />
+    <adsk:normal_map name="layered_normal_texture" type="vector3">
+      <input name="file" type="filename" value="CarbonFiberTwill/carbon_fiber_2twill_norm.png" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="0.33, 0.33" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="normal_scale" type="float" value="1" />
+    </adsk:normal_map>
+    <output name="layered_normal_map_output" type="vector3" nodename="layered_normal_texture" />
+  </nodegraph>
+</materialx>

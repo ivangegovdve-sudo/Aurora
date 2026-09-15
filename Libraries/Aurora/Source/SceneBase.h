@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -55,8 +55,11 @@ public:
         int distantLightCount = 0;
 
         // Explicitly pad struct to 16-byte boundary.
-        int pad[3];
+        int pad[3] = { 0, 0, 0 };
     };
+
+    static_assert(sizeof(LightData) % 16 == 0,
+        "LightData must be a multiple of 16 bytes to match Frame.slang; adjust pad.");
 
     SceneBase(IRenderer* pRenderer) : _pRenderer(pRenderer) {}
     ~SceneBase();
@@ -154,7 +157,7 @@ protected:
     static Path kDefaultImageName;
     vector<float> _defaultGeometryVerts = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     vector<int> _defaultGeometryIndices = { 0, 1, 2 };
-    vector<int> _defaultImagePixels     = { -1, -1, -1, -1 };
+    vector<int> _defaultImagePixels     = { 0, 0, 0, 0 };
 
     shared_ptr<ImageAsset> _pErrorImageData;
 };

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <adsk:transparent name="PolycarbonateBronze_shader" type="surfaceshader">
+    <input name="surface_albedo" type="color3" value="1, 1, 1" colorspace="rec709_display" />
+    <input name="surface_roughness" type="float" value="0" />
+    <input name="surface_anisotropy" type="float" value="0" />
+    <input name="surface_rotation" type="float" value="0" />
+    <input name="transparent_ior" type="float" value="1.585" />
+    <input name="transparent_color" type="color3" value="0.62621, 0.484529, 0.34919" colorspace="rec709_display" />
+    <input name="transparent_distance" type="float" value="25" unit="millimeter" unittype="distance" />
+  </adsk:transparent>
+  <surfacematerial name="PolycarbonateBronze" type="material" uiname="Prism-171">
+    <input name="surfaceshader" type="surfaceshader" nodename="PolycarbonateBronze_shader" />
+  </surfacematerial>
+</materialx>

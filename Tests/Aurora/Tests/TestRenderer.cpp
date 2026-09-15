@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Disable unit test as causes failure in debug mode
-#if _DEBUG
-#define DISABLE_UNIT_TESTS
-#endif
-
 #if !defined(DISABLE_UNIT_TESTS)
 
 #include <cmath>
@@ -218,14 +213,14 @@ TEST_P(RendererTest, TestRendererLargeSampleCount)
 }
 
 // Test destroying render buffer after renderer.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRendererDestroyRenderBufferFirst) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRendererDestroyRenderBufferFirst)
+#endif
 {
     // TODO: Should test assert message when creating renderer when not supported.
     if (!backendSupported())
-        return;
-
-    // Not currently supported on Vulkan.
-    if (!isDirectX())
         return;
 
     // Create a renderer for this type.
@@ -268,11 +263,12 @@ TEST_P(RendererTest, TestRendererDestroyRenderBufferFirst)
 }
 
 // Test a completely empty scene.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRendererEmptyScene) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRendererEmptyScene)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "EmptyScene is not worked on MacOS yet.";
 #endif
+{
     // Create the default scene. (also creates renderer)
     IRendererPtr pRenderer = createDefaultRenderer();
 
@@ -354,12 +350,12 @@ TEST_P(RendererTest, TestRenderBackgroundTheSameBetweenRenders)
 }
 
 // Test background the same between two identical renders
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRenderReadableBuffer) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRenderReadableBuffer)
+#endif
 {
-    // No layers on HGI currently.
-    if (!isDirectX())
-        return;
-
     // Create the default scene (also creates renderer)
     IScenePtr pScene       = createDefaultScene();
     IRendererPtr pRenderer = defaultRenderer();
@@ -418,7 +414,6 @@ TEST_P(RendererTest, TestRenderReadableBuffer)
 // TODO: Disabled as causing CI/CD errors.
 TEST_P(RendererTest, DISABLED_TestRendererInvalidBounds)
 {
-
     // Create the default scene and renderer.
     Aurora::IRendererPtr pRenderer = createDefaultRenderer();
 
@@ -453,11 +448,12 @@ TEST_P(RendererTest, DISABLED_TestRendererInvalidBounds)
 }
 
 // Ensure can render empty scene with no bounds.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRendererEmptySceneBounds) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRendererEmptySceneBounds)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "EmptyScene is not worked on MacOS yet.";
 #endif
+{
     // Create the default scene and renderer.
     Aurora::IRendererPtr pRenderer = createDefaultRenderer();
 
@@ -478,11 +474,12 @@ TEST_P(RendererTest, TestRendererEmptySceneBounds)
 }
 
 // Test ground plane.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRendererGroundPlane) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRendererGroundPlane)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "Ground Plane is not supported on MacOS yet.";
 #endif
+{
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
 
@@ -518,11 +515,12 @@ TEST_P(RendererTest, TestRendererGroundPlane)
 }
 
 // Test null environment.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRendererSetNullEnvironment) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRendererSetNullEnvironment)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "Null environment is not worked on MacOS yet.";
 #endif
+{
     // Create the default scene and renderer.
     IRendererPtr pRenderer = createDefaultRenderer();
 
@@ -767,13 +765,8 @@ TEST_P(RendererTest, TestRendererMaterialLayers)
 }
 
 // Test instance with invalid layer material paths
-// TODO: Re-enable test when layers are working.
 TEST_P(RendererTest, TestRendererInvalidMaterialLayerPaths)
 {
-    // No layers on HGI currently.
-    if (!isDirectX())
-        return;
-
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
 
@@ -856,13 +849,13 @@ TEST_P(RendererTest, TestRendererInvalidMaterialLayerPaths)
         ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: iter != _container.end()"));
 }
 
-// TODO: Re-enable test when layers are working.
+// Test layer materials with invalid geometries.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRendererInvalidGeometryLayers) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRendererInvalidGeometryLayers)
+#endif
 {
-    // No layers on HGI backed.
-    if(!isDirectX())
-        return;
-
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
 
@@ -956,13 +949,13 @@ TEST_P(RendererTest, TestRendererInvalidGeometryLayers)
         ::testing::StartsWith("Rendering has failed"));
 }
 
-// Test instance with layer materials
-// TODO: Re-enable test when layers are working.
+// Test instance with layer materials.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRendererMultipleMaterialLayers) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRendererMultipleMaterialLayers)
+#endif
 {
-    if (!isDirectX())
-        return;
-
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
 
@@ -1059,13 +1052,12 @@ TEST_P(RendererTest, TestRendererMultipleMaterialLayers)
 
 // Ensure renderer works with different geographic locales.
 // NOTE: This is necessary due to internal string manipulations inside the renderer.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestLocales) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestLocales)
+#endif
 {
-
-    // Relies on MaterialX which doesn't work on HGI.
-    if (!isDirectX())
-        return;
-
     // Selection of locales.
     // NOTE: These locales represent a wide set of different behaviors, and are not redundant with
     // each other.
@@ -1163,7 +1155,11 @@ TEST_P(RendererTest, TestRendererOrthographicProjection)
 }
 
 // Test alpha output.
+#if defined(__APPLE__)
+TEST_P(RendererTest, DISABLED_TestRendererAlpha) // TODO: Fix and re-enable this test.
+#else
 TEST_P(RendererTest, TestRendererAlpha)
+#endif
 {
     // Create the default scene and renderer.
     Aurora::IScenePtr pScene       = createDefaultScene();
@@ -1174,10 +1170,6 @@ TEST_P(RendererTest, TestRendererAlpha)
     {
         return;
     }
-
-    // Alpha output not implemented on HGI.
-    if (!isDirectX())
-        return;
 
     // Enable alpha output on the renderer.
     pRenderer->options().setBoolean("alphaEnabled", true);

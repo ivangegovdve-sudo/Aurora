@@ -22,13 +22,35 @@
 
 #define TINYEXR_USE_MINIZ 1
 #define TINYEXR_IMPLEMENTATION
+// C4505 is reported at end of translation unit, after any warning(pop), so it has to be
+// disabled at file scope rather than only around the include.
+#pragma warning(disable : 4505) // unreferenced function with internal linkage removed
 #pragma warning(push)
 #pragma warning(disable : 4706) // assignment within conditional expression
 #pragma warning(disable : 4245) // signed/unsigned mismatch
 #pragma warning(disable : 4702) // unreachable code
+#pragma warning(disable : 4100) // unreferenced formal parameter (tinyexr 1.0.13)
 #pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wall"
+#pragma clang diagnostic ignored "-Wextra"
+#pragma clang diagnostic ignored "-Wpedantic"
 #pragma clang diagnostic ignored "-Wunused-but-set-variable"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wunused-function"
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#pragma GCC diagnostic ignored "-Wtype-limits"
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 #include "tinyexr.h"
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #pragma clang diagnostic pop
 #pragma warning(pop)
 

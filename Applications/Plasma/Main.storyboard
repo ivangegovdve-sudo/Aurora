@@ -689,7 +689,6 @@
                         <rect key="contentRect" x="196" y="240" width="1280" height="720"/>
                         <rect key="screenRect" x="0.0" y="0.0" width="1680" height="1027"/>
                         <value key="minSize" type="size" width="1280" height="720"/>
-                        <value key="maxSize" type="size" width="1280" height="720"/>
                         <connections>
                             <outlet property="delegate" destination="B8D-0N-5wS" id="sqa-yk-rIe"/>
                         </connections>

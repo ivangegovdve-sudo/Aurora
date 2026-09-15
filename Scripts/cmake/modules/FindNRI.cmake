@@ -13,9 +13,43 @@ set(NRI_INCLUDE_DIRS ${NRI_INCLUDE_DIR})
 
 add_library(NRI::NRI SHARED IMPORTED)
 
+# Prioritize the NRI installed at ${NRI_ROOT}
+if (DEFINED NRI_ROOT)
+    if (WIN32)
+      find_library(NRI_LIBRARY_RELEASE       # Set variable NRI_LIBRARY_RELEASE
+                  NRI                        # Find library path with NRI.dll, or NRI.lib
+                  NO_DEFAULT_PATH
+                  PATHS "${NRI_ROOT}/bin"
+                  DOC "path to NRI release library files"
+      )
+      find_library(NRI_LIBRARY_DEBUG         # Set variable NRI_LIBRARY_DEBUG
+                  NRId                       # Find library path with NRId.dll, or NRId.lib
+                  NO_DEFAULT_PATH
+                  PATHS "${NRI_ROOT}/bin"
+                  DOC "path to NRI debug library files"
+      )
+    else()
+      find_library(NRI_LIBRARY_RELEASE       # Set variable NRI_LIBRARY_RELEASE
+                  NRI                        # Find library path with libNRI.so
+                  NO_DEFAULT_PATH
+                  PATHS "${NRI_ROOT}/lib"
+                  DOC "path to NRI release library files"
+      )
+      find_library(NRI_LIBRARY_DEBUG         # Set variable NRI_LIBRARY_DEBUG
+                  NRId                       # Find library path with libNRId.so
+                  NO_DEFAULT_PATH
+                  PATHS "${NRI_ROOT}/lib"
+                  DOC "path to NRI debug library files"
+      )
+    endif()
+endif()
 find_library(NRI_LIBRARY_RELEASE  # Set variable NRI_LIBRARY_RELEASE
              NRI                  # Find library path with libNRI.so, NRI.dll or NRI.lib
 )
+find_library(NRI_LIBRARY_DEBUG  # Set variable NRI_LIBRARY_DEBUG
+             NRId               # Find library path with libNRId.so, NRId.dll or NRId.lib
+)
+
 if(NRI_LIBRARY_RELEASE)
   set_property(TARGET NRI::NRI APPEND PROPERTY
     IMPORTED_CONFIGURATIONS RELEASE
@@ -33,9 +67,6 @@ if(NRI_LIBRARY_RELEASE)
   endif()
 endif()
 
-find_library(NRI_LIBRARY_DEBUG  # Set variable NRI_LIBRARY_DEBUG
-             NRId               # Find library path with libNRId.so, NRId.dll or NRId.lib
-)
 if(NRI_LIBRARY_DEBUG)
   set_property(TARGET NRI::NRI APPEND PROPERTY
     IMPORTED_CONFIGURATIONS DEBUG

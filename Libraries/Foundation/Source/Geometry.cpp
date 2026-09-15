@@ -99,7 +99,7 @@ void calculateNormals(size_t vertexCount, const float* vertex, size_t triangleCo
 #ifdef _WIN32
         ::memcpy_s(normalOut + i * 3, vertexCount * 3 * sizeof(float), &n, sizeof(vec3));
 #else
-        std::memcpy(normalOut + i * 3 * sizeof(float), &n, sizeof(vec3));
+        std::memcpy(normalOut + i * 3, &n, sizeof(vec3));
 #endif
     }
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,89 +32,108 @@ struct IndirectOutput
     [mutating]
     void clear()
     {
+#if ENABLE_NRD
+        // -1.0f means the lobe was not sampled. INFINITY means the ray hit the sky or environment.
+        // NRD treats -1.0f as 0.0, which enables AREA_3X3 reconstruction, and maps INFINITY to 1.0.
+        diffuse        = BLACK;
+        diffuseHitDist = -1.0f;
+        glossy         = BLACK;
+        glossyHitDist  = -1.0f;
+#else
         diffuse        = BLACK;
         diffuseHitDist = INFINITY;
         glossy         = BLACK;
         glossyHitDist  = INFINITY;
+#endif
     }
 };
 
 // Instance ray payload.  Used by all closest hit shaders.
 struct InstanceRayPayload {
-    float3 geomPosition; // the geometric position, interpolated from adjancent vertices
-    float2 texCoord; // the shading texture coordinates, interpolated from adjancent vertices
-    float3 objectNormal; // the shading position in object space (not world space). Used only in
-                           // materialX generated code.
-    float3 objectPosition; // the shading normal in object space (not world space). Used only in
-                           // materialX generated code.
-    // Offset withing instance data buffer for instance.
-    int instanceBufferOffset;
-    // Triangle indices for hit.
-    uint3 indices;
-    // Barycentric coordinates for hit.
-    float2 bary2;
-    // Distance from ray origin collision occurred.
-    float distance = INFINITY;
-    // BLAS index of instance that was hit (or -1 if not hit)
-    int instanceIndex;
-    
-    // Clears the indirect output to values expected for a miss.
+    Random rng;
+
+    float totalDistance = 0.0f;
+
+    uint packedData = 0;
+    float3 rayContribution;
+
+    float3 nextRayOrigin;
+    float3 nextRayDirection;
+
+    float3 direct;
+    float3 indirect;
+
     [mutating]
     void clear()
     {
-        instanceIndex = -1;
-        distance = INFINITY;
-        geomPosition = 0.0;
-        texCoord = 0.0;
-        objectNormal = 0.0;
-        objectPosition = 0.0;
-    }
-    bool hit() {
-        return instanceIndex>=0;
+        direct = float3(0.0f);
+        indirect = float3(0.0f);
     }
 
+    property bool isPrimaryRay
+    {
+        get { return bool(packedData & 1); }
+        set { packedData = (packedData & ~1) | (int(newValue) << 0); }
+    }
+
+    property bool pathEnded
+    {
+        get { return bool(packedData & 2); }
+        set { packedData = (packedData & ~2) | (int(newValue) << 1); }
+    }
+
+    property bool skipContribution
+    {
+        get { return bool(packedData & 4); }
+        set { packedData = (packedData & ~4) | (int(newValue) << 2); }
+    }
+
+    property int rayType
+    {
+        get { return (packedData >> 3) & 0x1f; }
+        set { packedData = (packedData & ~(0x1f << 3)) | (newValue << 3); }
+    }
+
+    property int nextRayType
+    {
+        get { return (packedData >> 8) & 0x1f; }
+        set { packedData = (packedData & ~(0x1f << 8)) | (newValue << 8); }
+    }
+
+    property int misLobeID
+    {
+        get { return (packedData >> 13) & 0x1f; }
+        set { packedData = (packedData & ~(0x1f << 13)) | (newValue << 13); }
+    }
+
+    property int rayDepth
+    {
+        get { return (packedData >> 18) & 0xff; }
+        set { packedData = (packedData & ~(0xff << 18)) | (newValue << 18); }
+    }
+
+    property float outputAlpha
+    {
+        get { return float((packedData >> 26) & 1); }
+        set { packedData = (packedData & ~(1 << 26)) | int(newValue) << 26; }
+    }
+
+    property bool isInside
+    {
+        get { return bool((packedData >> 27) & 1); }
+        set { packedData = (packedData & ~(1 << 27)) | (int(newValue) << 27); }
+    }
 };
-
-ShadingData shadingDataFromInstanceResult(InstanceRayPayload result)
-{
-    // Fill in the shading data from hit result.
-    ShadingData shading;
-    shading.geomPosition = result.geomPosition;
-    shading.texCoord = result.texCoord;
-    shading.objectNormal = result.objectNormal;
-    shading.objectPosition = result.objectPosition;
-    shading.barycentrics = computeBarycentrics(result.bary2);
-    shading.indices = result.indices;
-   
-    // Get transform matrix from instance buffer.
-    shading.objToWorld = transformMatrixForBLAS(result.instanceIndex);
-
-    // Transform object space attributes.
-    shading.position = mul(shading.objToWorld, float4(shading.objectPosition, 1.0f));
-    shading.normal = normalize(mul((float3x3) shading.objToWorld, shading.objectNormal));
-    
-    // As we don't currently support user-supplied tangents, we always use arbitrary tangent computed from normal.
-    float3 up =
-        abs(shading.normal.y) < 0.999f ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
-    shading.tangent = normalize(cross(shading.normal, up));
- 
-    // Generate bitangent from normal and tangent.
-    shading.bitangent = computeBitangent(shading.normal, shading.tangent);
-    shading.bitangentWorld = shading.bitangent; // Keep MaterialX (>= 1.39.x) alias in sync
-
-    return shading;
-}
 
 // Computes the origin and direction of a ray at the specified screen coordinates, using the
 // specified view parameters (orientation, position, and FOV).
 void computeCameraRay(float2 screenCoords, float2 screenSize, float4x4 invView, float2 viewSize,
-    bool isOrtho, float focalDistance, float lensRadius, inout Random rng, out float3 origin,
-    out float3 direction)
+    bool isOrtho, float focalDistance, float lensRadius, float2 cameraJitter,
+    bool isTemporalJitterEnabled, inout Random rng, out float3 origin, out float3 direction)
 {
-    // Apply a random offset to the screen coordinates, for antialiasing. Convert the screen
-    // coordinates to normalized device coordinates (NDC), i.e. the range [-1, 1] in X and Y. Also
-    // flip the Y component, so that +Y is up.
-    screenCoords += random2D(rng);
+    // Convert the integer pixel coordinate into a sub-pixel sample position. Temporal passes use a
+    // deterministic jitter centered on the pixel; non-temporal passes keep the original stochastic AA.
+    screenCoords += isTemporalJitterEnabled ? (0.5f + cameraJitter) : random2D(rng);
     float2 ndc = (screenCoords / screenSize) * 2.0f - 1.0f;
     ndc.y      = -ndc.y;
 
@@ -163,13 +182,12 @@ void computeCameraRay(float2 screenCoords, float2 screenSize, float4x4 invView, 
 }
 
 // Traces a ray in the specified direction, returning the radiance from that direction.
-bool traceInstanceRay(RaytracingAccelerationStructure scene, 
+void traceInstanceRay(RaytracingAccelerationStructure scene, 
     float3 origin, float3 dir, float tMin, inout InstanceRayPayload rayPayload)
 {
-
     // Set the force opaque ray flag to treat all objects as opaque, so that the any hit shader is
     // not called.
-    uint rayFlags        = RAY_FLAG_FORCE_OPAQUE;
+    uint rayFlags = RAY_FLAG_FORCE_OPAQUE;
 
     // Prepare the ray.
     RayDesc ray;
@@ -181,16 +199,14 @@ bool traceInstanceRay(RaytracingAccelerationStructure scene,
     rayPayload.clear();
 
     // Trace the ray.
-    TraceRay(scene,      // acceleration structure to be traced against
-        rayFlags,        // flags to control ray behavior
-        0xFF,            // instance mask
-        0,               // ray contribution to hit group index
-        0,               // multiplier for geometry contribution to hit group index
-        kMissNull,       // miss shader index (always null shader for instance rays)
-        ray,             // ray to be traced
-        rayPayload);     // in/out data for shaders invoked during tracing
-
-    return rayPayload.hit();
+    TraceRay(scene,    // acceleration structure to be traced against
+        rayFlags,      // flags to control ray behavior
+        0xFF,          // instance mask
+        0,             // ray contribution to hit group index
+        0,             // multiplier for geometry contribution to hit group index
+        kMissInstance, // miss shader index
+        ray,           // ray to be traced
+        rayPayload);   // in/out data for shaders invoked during tracing
 }
 
 

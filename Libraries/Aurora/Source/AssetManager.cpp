@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -288,13 +288,23 @@ AssetManager::AssetManager(
         };
 }
 
-shared_ptr<string> AssetManager::acquireTextFile(const string& uri)
+shared_ptr<string> AssetManager::acquireTextFile(const string& uri, string* pResolvedUriOut)
 {
     // Use callback function to load buffer.
     vector<unsigned char> buffer;
     string filename;
     if (!_loadResourceFunction(uri, &buffer, &filename))
         return nullptr;
+
+    // Treat an empty file as a failure: indexing the buffer below would otherwise dereference
+    // nothing, and there is no useful document in a zero byte file regardless.
+    if (buffer.empty())
+        return nullptr;
+
+    // Report where the file was actually found, so the caller can anchor relative references
+    // inside it to its own folder.
+    if (pResolvedUriOut)
+        *pResolvedUriOut = filename;
 
     // Return shared pointer to buffer as string.
     // TODO: Should cache based on URI.
@@ -307,6 +317,9 @@ shared_ptr<ImageAsset> AssetManager::acquireImage(const string& uri)
     vector<unsigned char> buffer;
     string filename;
     if (!_loadResourceFunction(uri, &buffer, &filename))
+        return nullptr;
+
+    if (buffer.empty())
         return nullptr;
 
     // Create shared pointer to image asset.

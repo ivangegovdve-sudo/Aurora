@@ -37,6 +37,7 @@ import platform
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -45,6 +46,18 @@ import zipfile
 import pathlib
 from shutil import which
 from urllib.request import urlopen
+
+def RmTree(path):
+    """Remove a directory tree, handling read-only files on Windows.
+
+    On Windows, git clones (e.g. CMake FetchContent deps) mark objects as
+    read-only.  shutil.rmtree raises PermissionError on those files.  The
+    onerror handler clears the read-only bit and retries.
+    """
+    def _handle_readonly(func, fpath, exc_info):
+        os.chmod(fpath, stat.S_IWRITE)
+        func(fpath)
+    shutil.rmtree(path, onerror=_handle_readonly)
 
 # Helpers for printing output
 verbosity = 1
@@ -102,7 +115,7 @@ def GetLocale():
 def GetCommandOutput(command):
     """Executes the specified command and returns output or None."""
     try:
-        return subprocess.check_output(shlex.split(command),
+        return subprocess.check_output(SplitCommand(command),
             stderr=subprocess.STDOUT).decode(GetLocale(), 'replace').strip()
     except subprocess.CalledProcessError:
         pass
@@ -253,6 +266,25 @@ def GetCPUCount():
     except NotImplementedError:
         return 1
 
+def SplitCommand(cmd):
+    """
+    Split a command line into argv for subprocess.
+
+    Both obvious tokenizers are wrong on Windows:
+      - shlex.split(posix=True) treats backslash as an escape, so it eats the separators in every
+        Windows path argument.
+      - shlex.split(posix=False) does not group a quoted span that follows other text, so
+        -DCMAKE_CXX_FLAGS="/Zm150 /utf-8" becomes two arguments and CMake receives an
+        unterminated quote that swallows the rest of the compiler command line.
+
+    Doubling the backslashes first makes the POSIX lexer treat each one as a literal, which gives
+    correct quote handling and intact paths. Batch files do not need a shell: CreateProcess runs
+    .bat/.cmd directly, so Boost still bootstraps.
+    """
+    if Windows():
+        return shlex.split(cmd.replace("\\", "\\\\"), posix=True)
+    return shlex.split(cmd)
+
 def Run(cmd, logCommandOutput = True):
     """
     Run the specified command in a subprocess.
@@ -269,8 +301,8 @@ def Run(cmd, logCommandOutput = True):
         # code will handle them.
         # TODO: Add space between arguments.
         if logCommandOutput:
-            p = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT)
+            args = SplitCommand(cmd)
+            p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while True:
                 l = p.stdout.readline().decode(GetLocale(), 'replace')
                 if l:
@@ -279,7 +311,8 @@ def Run(cmd, logCommandOutput = True):
                 elif p.poll() is not None:
                     break
         else:
-            p = subprocess.Popen(shlex.split(cmd))
+            args = SplitCommand(cmd)
+            p = subprocess.Popen(args)
             p.wait()
 
     if p.returncode != 0:
@@ -338,7 +371,7 @@ def CopyDirectory(context, srcDir, destDir, destPrefix = ''):
     """
     instDestDir = os.path.join(context.externalsInstDir, destPrefix, destDir)
     if os.path.isdir(instDestDir):
-        shutil.rmtree(instDestDir)
+        RmTree(instDestDir)
 
     PrintCommandOutput("Copying {srcDir} to {destDir}\n"
                        .format(srcDir=srcDir, destDir=instDestDir))
@@ -386,7 +419,7 @@ def RunCMake(context, clean, instFolder= None, extraArgs = None,  configExtraArg
     for config in BuildConfigs(context):
         buildDir = os.path.join(context.buildDir, os.path.split(srcDir)[1], config)
         if clean and os.path.isdir(buildDir):
-            shutil.rmtree(buildDir)
+            RmTree(buildDir)
         if not os.path.isdir(buildDir):
             os.makedirs(buildDir)
 
@@ -488,13 +521,29 @@ def PatchFile(filename, patches, multiLineMatches=False):
         open(filename, 'w').writelines(newLines)
 
 def ApplyGitPatch(context, patchfile):
-    try:
-        patch = os.path.normpath(os.path.join(context.auroraSrcDir, "Scripts", "Patches", patchfile))
-        PrintStatus(f"    Applying {patchfile} ...")
-        Run(f'git apply "{patch}"')
-        PrintStatus(f"    Done")
-    except Exception as e:
-        PrintWarning(f"Failed to apply {patchfile}. Skipped\n")
+    """
+    Apply a patch from Scripts/Patches to the current source directory.
+
+    A patch that silently fails to apply produces a confusing build failure much later (or, worse,
+    a subtly wrong build), so anything other than "already applied" is fatal.
+    """
+    patch = os.path.normpath(os.path.join(context.auroraSrcDir, "Scripts", "Patches", patchfile))
+    if not os.path.isfile(patch):
+        raise RuntimeError(f"Patch file not found: {patch}")
+
+    # Re-running an install reuses the existing source tree, so the patch may already be in place.
+    # "git apply --reverse --check" succeeds only when it is fully applied. Run it directly rather
+    # than through Run(): on a pristine tree it is expected to fail, and its "patch does not apply"
+    # output on stderr looks alarming in the log when nothing is actually wrong.
+    args = SplitCommand(f'git apply --reverse --check "{patch}"')
+    if subprocess.run(args, stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL).returncode == 0:
+        PrintStatus(f"    {patchfile} already applied, skipping")
+        return
+
+    PrintStatus(f"    Applying {patchfile} ...")
+    Run(f'git apply "{patch}"')
+    PrintStatus(f"    Done")
 
 
 
@@ -592,7 +641,7 @@ def DownloadURL(url, context, force, extractDir = None, dontExtract = None, dest
                 extractedPath = os.path.abspath(destDir if destDir else rootDir)
 
                 if force and os.path.isdir(extractedPath):
-                    shutil.rmtree(extractedPath)
+                    RmTree(extractedPath)
 
                 if os.path.isdir(extractedPath):
                     PrintInfo("Directory {0} already exists, skipping extract"
@@ -606,7 +655,7 @@ def DownloadURL(url, context, force, extractDir = None, dontExtract = None, dest
                     # again.
                     tmpExtractedPath = os.path.abspath("extract_dir")
                     if os.path.isdir(tmpExtractedPath):
-                        shutil.rmtree(tmpExtractedPath)
+                        RmTree(tmpExtractedPath)
 
                     if destDir:
                         archive.extractall(os.path.join(tmpExtractedPath, destDir), members=members)
@@ -616,7 +665,7 @@ def DownloadURL(url, context, force, extractDir = None, dontExtract = None, dest
                         shutil.move(os.path.join(tmpExtractedPath, rootDir), extractedPath)
 
                     if os.path.isdir(tmpExtractedPath):
-                        shutil.rmtree(tmpExtractedPath)
+                        RmTree(tmpExtractedPath)
 
                 return extractedPath
         except Exception as e:

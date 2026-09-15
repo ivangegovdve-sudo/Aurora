@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <adsk:glazing name="BronzeInsulating_shader" type="surfaceshader">
+    <input name="surface_albedo" type="color3" value="1, 1, 1" colorspace="rec709_display" />
+    <input name="surface_roughness" type="float" value="0" />
+    <input name="surface_anisotropy" type="float" value="0" />
+    <input name="surface_rotation" type="float" value="0" />
+    <input name="glazing_transmission_color" type="color3" value="0.738903, 0.71889, 0.702213" colorspace="rec709_display" />
+    <input name="glazing_transmission_roughness" type="float" value="0" />
+    <input name="glazing_f0" type="color3" value="0.31847, 0.312326, 0.30755" colorspace="rec709_display" />
+    <input name="glazing_backface_culling" type="boolean" value="true" />
+  </adsk:glazing>
+  <surfacematerial name="BronzeInsulating" type="material" uiname="Prism-2011">
+    <input name="surfaceshader" type="surfaceshader" nodename="BronzeInsulating_shader" />
+  </surfacematerial>
+</materialx>

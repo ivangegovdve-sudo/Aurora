@@ -1,25 +1,25 @@
-void setupMaterial_e757910544ff95e9(
-	Material_e757910544ff95e9 material,
+void setupMaterial_eff66640139564d9(
+	Material_eff66640139564d9 material,
 	sampler2D base_color_image_image_parameter,
-	out vec3 base_color)
+	out float3 base_color)
 {
 	//Temp input variables for base_color_image 
-	vec3 nodeOutTmp_base_color_image_out; //Temp output variable for out 
-	sampler2D nodeTmp_base_color_image_file; //Temp input variable for file 
+	float3 nodeOutTmp_base_color_image_out; //Temp output variable for out 
+	SamplerTexture2D nodeTmp_base_color_image_file; //Temp input variable for file 
 	int nodeTmp_base_color_image_layer; //Temp input variable for layer 
-	vec3 nodeTmp_base_color_image_default; //Temp input variable for default 
-	vec2 nodeTmp_base_color_image_texcoord; //Temp input variable for texcoord 
+	float3 nodeTmp_base_color_image_default; //Temp input variable for default 
+	float2 nodeTmp_base_color_image_texcoord; //Temp input variable for texcoord 
 	int nodeTmp_base_color_image_uaddressmode; //Temp input variable for uaddressmode 
 	int nodeTmp_base_color_image_vaddressmode; //Temp input variable for vaddressmode 
 	int nodeTmp_base_color_image_filtertype; //Temp input variable for filtertype 
 	int nodeTmp_base_color_image_framerange; //Temp input variable for framerange 
 	int nodeTmp_base_color_image_frameoffset; //Temp input variable for frameoffset 
 	int nodeTmp_base_color_image_frameendaction; //Temp input variable for frameendaction 
-	vec2 nodeTmp_base_color_image_uv_scale; //Temp input variable for uv_scale 
-	vec2 nodeTmp_base_color_image_uv_offset; //Temp input variable for uv_offset 
+	float2 nodeTmp_base_color_image_uv_scale; //Temp input variable for uv_scale 
+	float2 nodeTmp_base_color_image_uv_offset; //Temp input variable for uv_offset 
 	// Graph input NG1/base_color_image/file
 	//{
-sampler2D base_color_image_file1//};
+SamplerTexture2D base_color_image_file1//};
  = base_color_image_image_parameter;
 	nodeTmp_base_color_image_file = base_color_image_file1;// Output connection
 	// Graph input NG1/base_color_image/layer
@@ -29,21 +29,21 @@ int base_color_image_layer1 = 0//};
 	nodeTmp_base_color_image_layer = base_color_image_layer1;// Output connection
 	// Graph input NG1/base_color_image/default
 	//{
-vec3 base_color_image_default1 = vec3(0, 0, 0)//};
+float3 base_color_image_default1 = float3(0, 0, 0)//};
 ;
 	nodeTmp_base_color_image_default = base_color_image_default1;// Output connection
 	//Temp input variables for geomprop_UV0 
-	vec2 nodeOutTmp_geomprop_UV0_out; //Temp output variable for out 
+	float2 nodeOutTmp_geomprop_UV0_out; //Temp output variable for out 
 	int nodeTmp_geomprop_UV0_index; //Temp input variable for index 
 	// Graph input UV0
 	//{
 int geomprop_UV0_index1 = 0//};
 ;
 	nodeTmp_geomprop_UV0_index = geomprop_UV0_index1;// Output connection
-	// Graph input function call texcoord (See definition IM_texcoord_vector2_genglsl)
+	// Graph input function call texcoord (See definition IM_texcoord_vector2_genslang)
 {
 	//{
-    vec2 geomprop_UV0_out1 = vertexData.texCoord.xy;
+    float2 geomprop_UV0_out1 = vertexData.texCoord.xy;
 //};
 	nodeOutTmp_geomprop_UV0_out = geomprop_UV0_out1;// Output connection
 	nodeTmp_base_color_image_texcoord = geomprop_UV0_out1;// Output connection
@@ -80,18 +80,18 @@ int base_color_image_frameendaction1 = 0//};
 	nodeTmp_base_color_image_frameendaction = base_color_image_frameendaction1;// Output connection
 	// Graph input 
 	//{
-vec2 base_color_image_uv_scale1 = vec2(1, 1)//};
+float2 base_color_image_uv_scale1 = float2(1, 1)//};
 ;
 	nodeTmp_base_color_image_uv_scale = base_color_image_uv_scale1;// Output connection
 	// Graph input 
 	//{
-vec2 base_color_image_uv_offset1 = vec2(0, 0)//};
+float2 base_color_image_uv_offset1 = float2(0, 0)//};
 ;
 	nodeTmp_base_color_image_uv_offset = base_color_image_uv_offset1;// Output connection
-	// Graph input function call base_color (See definition IM_image_color3_genglsl)
+	// Graph input function call base_color (See definition IM_image_color3_genslang)
 {
 	//{
-    vec3 base_color_image_out = vec3(0.0);
+    float3 base_color_image_out = float3(0.0);
     mx_image_color3(nodeTmp_base_color_image_file, nodeTmp_base_color_image_layer, nodeTmp_base_color_image_default, nodeTmp_base_color_image_texcoord, nodeTmp_base_color_image_uaddressmode, nodeTmp_base_color_image_vaddressmode, nodeTmp_base_color_image_filtertype, nodeTmp_base_color_image_framerange, nodeTmp_base_color_image_frameoffset, nodeTmp_base_color_image_frameendaction, nodeTmp_base_color_image_uv_scale, nodeTmp_base_color_image_uv_offset, base_color_image_out);
 //};
 	nodeOutTmp_base_color_image_out = base_color_image_out;// Output connection

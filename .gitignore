@@ -12,6 +12,7 @@ __pycache__
 .DS_Store
 .venv
 plugInfo.json
+pluginPath.plugInfo.json
 
 # Ignore IDE cache folders
 .vs/

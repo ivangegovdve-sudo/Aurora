@@ -246,6 +246,13 @@ vec4 texture(texture2d_array<float> texture, Tc coords) {
 }
 #define discard discard_fragment(); discarded_fragment = true;
 
+// Map MaterialX math functions.
+#define mx_sin sin
+#define mx_cos cos
+#define mx_tan tan
+#define mx_asin asin
+#define mx_acos acos
+
 // //////// Global Member Declarations ////////
 struct MSLCsUniforms {
 vec3 gSettings_brightness[[]];

@@ -85,7 +85,7 @@ struct SceneContents
 
     // fixed cameras in the scene
     std::vector<SceneCamera> cameras;
-    
+
     // Clear the contents all the loaded values instance data.
     void reset();
 };

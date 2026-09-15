@@ -213,7 +213,13 @@ bool Transpiler::transpile(const string& shaderName, string& codeOut, string& er
     std::vector<CompilerOptionEntry> compilerOptions;
     compilerOptions.push_back(
         { CompilerOptionName::NoMangle, { CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr } });
-    compilerOptions.push_back({ CompilerOptionName::GenerateWholeProgram,
+    // Only use GenerateWholeProgram for HLSL since GLSL has extern symbols.
+    if (target == Language::HLSL)
+    {
+        compilerOptions.push_back({ CompilerOptionName::GenerateWholeProgram,
+            { CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr } });
+    }
+    compilerOptions.push_back({ CompilerOptionName::IncompleteLibrary,
         { CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr } });
     targetDesc.compilerOptionEntries    = compilerOptions.data();
     targetDesc.compilerOptionEntryCount = static_cast<uint32_t>(compilerOptions.size());
@@ -225,6 +231,13 @@ bool Transpiler::transpile(const string& shaderName, string& codeOut, string& er
     sessionDesc.fileSystem              = _pFileSystem.get();
     sessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
     sessionDesc.allowGLSLSyntax         = true;
+
+    // Enable incomplete library mode to handle extern functions linked separately.
+    std::vector<CompilerOptionEntry> sessionOptions;
+    sessionOptions.push_back({ CompilerOptionName::IncompleteLibrary,
+        { CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr } });
+    sessionDesc.compilerOptionEntries    = sessionOptions.data();
+    sessionDesc.compilerOptionEntryCount = static_cast<uint32_t>(sessionOptions.size());
 
     // Setup pre-defined macros.
     std::vector<PreprocessorMacroDesc> preprocessorMacros;
@@ -242,33 +255,38 @@ bool Transpiler::transpile(const string& shaderName, string& codeOut, string& er
     _pSession->createSession(sessionDesc, session.writeRef());
 
     // Transpile the file.
+    // NOTE: Slang diagnostics include warnings and errors. Only fail if no result is produced.
     Slang::ComPtr<IBlob> diagnostics;
     const string fileName = shaderName + ".slang";
     Slang::ComPtr<IModule> sessionModule(session->loadModuleFromSource(shaderName.c_str(),
         fileName.c_str(), _pFileSystem->getSource(shaderName), diagnostics.writeRef()));
-    if (diagnostics)
-    {
-        errorOut = (const char*)diagnostics->getBufferPointer();
+    if (diagnostics && diagnostics->getBufferSize() > 0)
+        errorOut += "[loadModuleFromSource]\n" + string((const char*)diagnostics->getBufferPointer());
+    if (!sessionModule)
         return false;
-    }
 
-    // Link the module to get a program
+    // Link the module to get a program.
+    // linkWithOptions rather than link, so IncompleteLibrary is supplied to the link step as
+    // well as to the session and target above.
+    diagnostics.setNull();
     Slang::ComPtr<IComponentType> linkedProgram;
-    sessionModule->link(linkedProgram.writeRef(), diagnostics.writeRef());
-    if (diagnostics)
-    {
-        errorOut = (const char*)diagnostics->getBufferPointer();
+    const CompilerOptionEntry linkOptions[] = { { CompilerOptionName::IncompleteLibrary,
+        { CompilerOptionValueKind::Int, 1, 0, nullptr, nullptr } } };
+    sessionModule->linkWithOptions(linkedProgram.writeRef(),
+        static_cast<uint32_t>(std::size(linkOptions)), linkOptions, diagnostics.writeRef());
+    if (diagnostics && diagnostics->getBufferSize() > 0)
+        errorOut += "[link]\n" + string((const char*)diagnostics->getBufferPointer());
+    if (!linkedProgram)
         return false;
-    }
 
     // Get blob for result.
+    diagnostics.setNull();
     Slang::ComPtr<ISlangBlob> outBlob;
     linkedProgram->getTargetCode(0 /* targetIndex */, outBlob.writeRef(), diagnostics.writeRef());
-    if (diagnostics)
-    {
-        errorOut = (const char*)diagnostics->getBufferPointer();
+    if (diagnostics && diagnostics->getBufferSize() > 0)
+        errorOut += "[getTargetCode]\n" + string((const char*)diagnostics->getBufferPointer());
+    if (!outBlob)
         return false;
-    }
     codeOut = (const char*)outBlob->getBufferPointer();
     return true;
 }

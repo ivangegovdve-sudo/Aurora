@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,11 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Disable unit test as causes failure in debug mode
-#if _DEBUG
-#define DISABLE_UNIT_TESTS
-#endif
 
 #if !defined(DISABLE_UNIT_TESTS)
 
@@ -43,11 +38,14 @@ public:
 
     void setupAssetPaths(const vector<string>& additionalPaths = {})
     {
-
         _paths = { "", dataPath() + "/Materials/", dataPath() + "/Textures/" };
         for (size_t i = 0; i < additionalPaths.size(); i++)
         {
             _paths.push_back(additionalPaths[i]);
+        }
+        for (const string& path : _paths)
+        {
+            defaultRenderer()->addMdlSearchPath(path);
         }
         // Setup the resource loading function to use asset search paths.
         auto loadResourceFunc = [this](const string& uri, vector<unsigned char>* pBufferOut,
@@ -80,7 +78,7 @@ public:
     ~MaterialTest() {}
 
     // Test for the existence of the ADSK materialX libraries (in the working folder for the tests)
-    bool adskMaterialXSupport() { return std::filesystem::exists("MaterialX/libraries/adsk"); }
+    bool adskMaterialXSupport() { return std::filesystem::exists("MaterialX/libraries/adsklib"); }
 
     // Load a MaterialX document and process file paths to correct locations for unit tests.
     string loadAndProcessMaterialXFile(const string& filename)
@@ -658,7 +656,7 @@ TEST_P(MaterialTest, TestMaterialAdvancedMaterialProperties)
         vec3 bc2(0.3f, 0.2f, 0.95f);
         vec3 bc3(0.7f, 0.8f, 0.05f);
         vec3 grey(0.25f, 0.25f, 0.25f);
-        
+
         // Test subsurface color (X-axis) against subsurface radius (Y-axis)
         for (uint32_t i = 0; i < gridHeight; i++)
         {
@@ -849,12 +847,12 @@ TEST_P(MaterialTest, TestMaterialAdvancedMaterialProperties)
 }
 
 // Test material type creation using MaterialX
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMaterialTypes) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestMaterialTypes)
+#endif
 {
-    // No MaterialX on HGI yet.
-    if (!isDirectX())
-        return;
-
     // Create the default scene (also creates renderer)
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
@@ -935,12 +933,12 @@ TEST_P(MaterialTest, TestMaterialTypes)
 }
 
 // Test material creation using MaterialX
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMaterialX) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestMaterialX)
+#endif
 {
-    // No MaterialX on HGI yet.
-    if (!isDirectX())
-        return;
-
     // Create the default scene (also creates renderer)
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
@@ -967,13 +965,13 @@ TEST_P(MaterialTest, TestMaterialX)
         "  <nodegraph name=\"NG_Test1\">\n"
         "    <position name=\"positionWorld\" type=\"vector3\" />\n"
         "    <constant name=\"constant_1\" type=\"color3\">\n"
-        "      <parameter name=\"value\" type=\"color3\" value=\"1.0, 0.1, 0.0\" />\n"
+        "      <input name=\"value\" type=\"color3\" value=\"1.0, 0.1, 0.0\" />\n"
         "    </constant>\n"
         "    <constant name=\"constant_2\" type=\"color3\">\n"
-        "      <parameter name=\"value\" type=\"color3\" value=\"0.0, 0.0, 0.0\" />\n"
+        "      <input name=\"value\" type=\"color3\" value=\"0.0, 0.0, 0.0\" />\n"
         "    </constant>\n"
         "    <constant name=\"mix_amount\" type=\"float\">\n"
-        "      <parameter name=\"value\" type=\"float\" value=\"0.6\" />\n"
+        "      <input name=\"value\" type=\"float\" value=\"0.6\" />\n"
         "    </constant>\n"
         "    <mix name=\"mix1\" type=\"color3\">\n"
         "      <input name=\"mix\" type=\"float\" nodename=\"mix_amount\" />\n"
@@ -1016,11 +1014,12 @@ TEST_P(MaterialTest, TestMaterialX)
 }
 
 // Test material creation using MaterialX file dumped from HdAurora.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestHdAuroraMaterialX) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestHdAuroraMaterialX)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "MaterialX is not supported on MacOS yet.";
 #endif
+{
     // Create the default scene (also creates renderer)
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
@@ -1054,11 +1053,12 @@ TEST_P(MaterialTest, TestHdAuroraMaterialX)
 }
 
 // Test material creation using MaterialX file dumped from HdAurora that has a texture.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestHdAuroraTextureMaterialX) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestHdAuroraTextureMaterialX)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "MaterialX is not supported on MacOS yet.";
 #endif
+{
     // Create the default scene (also creates renderer)
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
@@ -1067,9 +1067,9 @@ TEST_P(MaterialTest, TestHdAuroraTextureMaterialX)
 
     setDefaultRendererPathTracingIterations(256);
 
-    setupAssetPaths();
-
-    // If pRenderer is null this renderer type not supported, skip rest of the test.
+    // NOTE: deliberately no setupAssetPaths() here. This document references its textures
+    // relatively ("../Textures/..."), and passing it by path lets Aurora anchor those references
+    // to the document's own folder, so no host supplied search path is needed.
     if (!pRenderer)
         return;
 
@@ -1092,15 +1092,14 @@ TEST_P(MaterialTest, TestHdAuroraTextureMaterialX)
 }
 
 // Test different settings for isFlipImageYEnabled option.
-// Disabled as this testcase fails with error in MaterialGenerator::generate
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMaterialXFlipImageY) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestMaterialXFlipImageY)
+#endif
 {
     // This mtlx file requires support ADSK materialX support.
     if (!adskMaterialXSupport())
-        return;
-
-    // No MaterialX on HGI yet.
-    if (!isDirectX())
         return;
 
     for (int flipped = 0; flipped < 2; flipped++)
@@ -1147,12 +1146,12 @@ TEST_P(MaterialTest, TestMaterialXFlipImageY)
 }
 
 // Test material creation using MaterialX
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestLotsOfMaterialX) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestLotsOfMaterialX)
+#endif
 {
-    // No MaterialX on HGI yet.
-    if (!isDirectX())
-        return;
-
     // Create the default scene (also creates renderer)
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
@@ -1258,7 +1257,11 @@ TEST_P(MaterialTest, TestLotsOfMaterialX)
 
 // Test different MtlX file that loads a BMP.
 // Disabled as this testcase fails with error in MaterialGenerator::generate
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMaterialXBMP) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestMaterialXBMP)
+#endif
 {
     // This mtlx file requires support ADSK materialX support.
     if (!adskMaterialXSupport())
@@ -1271,10 +1274,6 @@ TEST_P(MaterialTest, TestMaterialXBMP)
 
     // If pRenderer is null this renderer type not supported, skip rest of the test.
     if (!pRenderer)
-        return;
-
-    // No MaterialX on HGI yet.
-    if (!isDirectX())
         return;
 
     // Create teapot geom.
@@ -1301,9 +1300,12 @@ TEST_P(MaterialTest, TestMaterialXBMP)
     ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName(), "Materials");
 }
 
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMaterialXImageNode) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestMaterialXImageNode)
+#endif
 {
-
     // Create the default scene (also creates renderer)
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
@@ -1313,9 +1315,7 @@ TEST_P(MaterialTest, TestMaterialXImageNode)
     if (!pRenderer)
         return;
 
-    // No MaterialX on HGI yet.
-    if (!isDirectX())
-        return;
+    setupAssetPaths();
 
     // Create teapot geom.
     Path geometry = createTeapotGeometry(*pScene);
@@ -1466,13 +1466,249 @@ TEST_P(MaterialTest, TestMaterialShadowTransparency)
     ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName() + "Opacity", "Materials");
 }
 
-// Disabled as this testcase fails with error in MaterialGenerator::generate
-// TODO: Re-enable once samplers working.
-TEST_P(MaterialTest, TestMtlXSamplers)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "MaterialX is not supported on MacOS yet.";
+// Fundamental MaterialX tests.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestBasicMaterialX) // TODO: Fix and re-enable this test.
+#else
+TEST_P(MaterialTest, TestBasicMaterialX)
 #endif
+{
+    // Create the default scene (also creates renderer)
+    auto pScene    = createDefaultScene();
+    auto pRenderer = defaultRenderer();
+
+    // If pRenderer is null this renderer type not supported, skip rest of the test.
+    if (!pRenderer)
+        return;
+
+    setupAssetPaths();
+
+    defaultDistantLight()->values().setFloat(Aurora::Names::LightProperties::kIntensity, 2.0f);
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kDirection, value_ptr(glm::vec3(0.0f, -0.25f, +1.0f)));
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kColor, value_ptr(glm::vec3(1, 1, 1)));
+
+    // Create geometry.
+    Path planePath  = createPlaneGeometry(*pScene);
+    Path teapotPath = createTeapotGeometry(*pScene);
+
+    // Add geometry with the materials.
+    string imageMtlXPath        = dataPath() + "/Materials/ImageTest.mtlx";
+    string processedMtlXString0 = loadAndProcessMaterialXFile(imageMtlXPath);
+    EXPECT_FALSE(processedMtlXString0.empty());
+    Path imageMaterialPath = "ImageMaterial";
+    pScene->setMaterialType(
+        imageMaterialPath, Names::MaterialTypes::kMaterialX, processedMtlXString0);
+
+    Properties instProps;
+    Path planeInst("PlaneInstance");
+    mat4 scaleMtx                                    = scale(vec3(2, 2, 2));
+    instProps[Names::InstanceProperties::kMaterial]  = imageMaterialPath;
+    instProps[Names::InstanceProperties::kTransform] = scaleMtx;
+    EXPECT_TRUE(pScene->addInstance(planeInst, planePath, instProps));
+
+    Path teapotInst("TeapotInstance");
+    instProps[Names::InstanceProperties::kMaterial]  = imageMaterialPath;
+    instProps[Names::InstanceProperties::kTransform] = mat4();
+    EXPECT_TRUE(pScene->addInstance(teapotInst, teapotPath, instProps));
+
+    // Render the scene and check baseline image.
+    ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName() + "_ImageTest", "Materials");
+
+    // Test a few more MaterialX files.
+    string inputsMtlXPath       = dataPath() + "/Materials/InputsTest.mtlx";
+    string processedMtlXString1 = loadAndProcessMaterialXFile(inputsMtlXPath);
+    EXPECT_FALSE(processedMtlXString1.empty());
+    Path inputMaterialPath = "InputMaterial";
+    pScene->setMaterialType(
+        inputMaterialPath, Names::MaterialTypes::kMaterialX, processedMtlXString1);
+    pScene->setInstanceProperties(
+        teapotInst, { { Names::InstanceProperties::kMaterial, inputMaterialPath } });
+    ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName() + "_InputsTest", "Materials");
+
+    string StdsurfMtlXPath      = dataPath() + "/Materials/StdsurfTest.mtlx";
+    string processedMtlXString3 = loadAndProcessMaterialXFile(StdsurfMtlXPath);
+    EXPECT_FALSE(processedMtlXString3.empty());
+    Path stdsurfPath = "StdsurfMaterial";
+    pScene->setMaterialType(stdsurfPath, Names::MaterialTypes::kMaterialX, processedMtlXString3);
+    pScene->setInstanceProperties(
+        planeInst, { { Names::InstanceProperties::kMaterial, stdsurfPath } });
+    pScene->setInstanceProperties(
+        teapotInst, { { Names::InstanceProperties::kMaterial, stdsurfPath } });
+    ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName() + "_StdsurfTest", "Materials");
+}
+
+// Pattern graph support enabled by native Slang codegen.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMaterialXPatternGraph)
+#else
+TEST_P(MaterialTest, TestMaterialXPatternGraph)
+#endif
+{
+    // Create the default scene (also creates renderer)
+    auto pScene    = createDefaultScene();
+    auto pRenderer = defaultRenderer();
+
+    // If pRenderer is null this renderer type not supported, skip rest of the test.
+    if (!pRenderer)
+        return;
+
+    setupAssetPaths();
+
+    defaultDistantLight()->values().setFloat(Aurora::Names::LightProperties::kIntensity, 2.0f);
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kDirection, value_ptr(glm::vec3(0.0f, -0.25f, +1.0f)));
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kColor, value_ptr(glm::vec3(1, 1, 1)));
+
+    // Create geometry.
+    Path planePath  = createPlaneGeometry(*pScene);
+    Path teapotPath = createTeapotGeometry(*pScene);
+
+    // Add geometry with the materials.
+    string marblegraphMtlXPath = dataPath() + "/Materials/MarbleGraphTest.mtlx";
+    string processedMtlXString = loadAndProcessMaterialXFile(marblegraphMtlXPath);
+    EXPECT_FALSE(processedMtlXString.empty());
+    Path marblegraphMaterialPath = "MarbleGraphMaterial";
+    pScene->setMaterialType(
+        marblegraphMaterialPath, Names::MaterialTypes::kMaterialX, processedMtlXString);
+
+    Properties instProps;
+    Path planeInst("PlaneInstance");
+    mat4 scaleMtx                                    = scale(vec3(2, 2, 2));
+    instProps[Names::InstanceProperties::kMaterial]  = marblegraphMaterialPath;
+    instProps[Names::InstanceProperties::kTransform] = scaleMtx;
+    EXPECT_TRUE(pScene->addInstance(planeInst, planePath, instProps));
+
+    Path teapotInst("TeapotInstance");
+    instProps[Names::InstanceProperties::kMaterial]  = marblegraphMaterialPath;
+    instProps[Names::InstanceProperties::kTransform] = mat4();
+    EXPECT_TRUE(pScene->addInstance(teapotInst, teapotPath, instProps));
+
+    // Render the scene and check baseline image.
+    ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName(), "Materials");
+}
+
+// Displacement shader enabled on non-Apple platforms.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMtlxDisplacementShader)
+#else
+TEST_P(MaterialTest, TestMtlxDisplacementShader)
+#endif
+{
+    // Larger image so the material details are clearly visible.
+    createDefaultRenderer(512, 512);
+
+    auto pScene    = createDefaultScene();
+    auto pRenderer = defaultRenderer();
+
+    // If pRenderer is null this renderer type not supported, skip rest of the test.
+    if (!pRenderer)
+        return;
+
+    // Max trace depth so reflections and displacement effects are fully captured.
+    pRenderer->options().setInt("traceDepth", 10);
+    setDefaultRendererPathTracingIterations(256);
+
+    setupAssetPaths();
+
+    defaultDistantLight()->values().setFloat(Aurora::Names::LightProperties::kIntensity, 2.0f);
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kDirection, value_ptr(glm::vec3(0.0f, -0.25f, +1.0f)));
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kColor, value_ptr(glm::vec3(1, 1, 1)));
+
+    // Create geometry.
+    Path teapotPath = createTeapotGeometry(*pScene);
+
+    // Add geometry with the brass + displacement material.
+    string brassMtlXPath       = dataPath() + "/Materials/BrassTest.mtlx";
+    string processedMtlXString = loadAndProcessMaterialXFile(brassMtlXPath);
+    EXPECT_FALSE(processedMtlXString.empty());
+    Path brassPath = "BrassMaterial";
+    pScene->setMaterialType(brassPath, Names::MaterialTypes::kMaterialX, processedMtlXString);
+
+    Properties instProps;
+    Path teapotInst("TeapotInstance");
+    instProps[Names::InstanceProperties::kMaterial]  = brassPath;
+    instProps[Names::InstanceProperties::kTransform] = mat4();
+    EXPECT_TRUE(pScene->addInstance(teapotInst, teapotPath, instProps));
+
+    // Render the scene and check baseline image.
+    ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName(), "Materials");
+}
+
+// Test MaterialX pattern graphs (checkerboard patterns via surface_unlit shader).
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestPatternGraphsMaterialX)
+#else
+TEST_P(MaterialTest, TestPatternGraphsMaterialX)
+#endif
+{
+    // Larger image so the checker patterns are clearly visible.
+    createDefaultRenderer(512, 512);
+
+    auto pScene    = createDefaultScene();
+    auto pRenderer = defaultRenderer();
+    if (!pRenderer)
+        return;
+
+    setDefaultRendererPathTracingIterations(64);
+
+    setupAssetPaths();
+
+    defaultDistantLight()->values().setFloat(Aurora::Names::LightProperties::kIntensity, 1.5f);
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kDirection, value_ptr(glm::vec3(0.0f, -0.5f, 1.0f)));
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kColor, value_ptr(glm::vec3(1, 1, 1)));
+
+    // PatternGraphs.mtlx defines two complete checker materials using a shared custom nodedef.
+    string patternMtlXPath = dataPath() + "/Materials/PatternGraphs.mtlx";
+    string patternMtlX     = loadAndProcessMaterialXFile(patternMtlXPath);
+    EXPECT_FALSE(patternMtlX.empty()) << "Failed to load PatternGraphs.mtlx";
+    if (patternMtlX.empty())
+        return;
+
+    // PatternMat1: fine 32×32 red/white checker on the plane.
+    // PatternMat2: coarse 2×2 blue/white checker on the teapot.
+    Path mat1("PatternMat1");
+    pScene->setMaterialType(mat1, Names::MaterialTypes::kMaterialX, patternMtlX);
+    Path mat2("PatternMat2");
+    pScene->setMaterialType(mat2, Names::MaterialTypes::kMaterialX, patternMtlX);
+
+    // Plane (scaled up so the 32×32 checker is legible) with the fine checker.
+    Path planePath  = createPlaneGeometry(*pScene);
+    Path teapotPath = createTeapotGeometry(*pScene);
+
+    {
+        Path inst("PlaneInst");
+        Properties props;
+        props[Names::InstanceProperties::kMaterial]  = mat1;
+        props[Names::InstanceProperties::kTransform] = scale(vec3(3, 3, 3));
+        EXPECT_TRUE(pScene->addInstance(inst, planePath, props));
+    }
+    // Teapot with the coarse checker.
+    {
+        Path inst("TeapotInst");
+        Properties props;
+        props[Names::InstanceProperties::kMaterial]  = mat2;
+        props[Names::InstanceProperties::kTransform] = translate(vec3(0, 0, 0));
+        EXPECT_TRUE(pScene->addInstance(inst, teapotPath, props));
+    }
+
+    // Render and compare against baseline.
+    ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName(), "Materials");
+}
+
+// Disabled as this testcase fails with error in MaterialGenerator::generate
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMtlXSamplers) // TODO: Fix and re-enable this test.
+#else
+TEST_P(MaterialTest, TestMtlXSamplers)
+#endif
+{
     // This mtlx file requires support ADSK materialX support.
     if (!adskMaterialXSupport())
         return;
@@ -1513,15 +1749,14 @@ TEST_P(MaterialTest, TestMtlXSamplers)
 }
 
 // MaterialX as layered materials
-// Disabled as this testcase fails with error in MaterialGenerator::generate
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMaterialMaterialXLayers) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestMaterialMaterialXLayers)
+#endif
 {
     // This mtlx file requires support ADSK materialX support.
     if (!adskMaterialXSupport())
-        return;
-
-    // No MaterialX on HGI yet.
-    if (!isDirectX())
         return;
 
     auto pScene    = createDefaultScene();
@@ -1639,16 +1874,15 @@ TEST_P(MaterialTest, TestMaterialMaterialXLayers)
     ASSERT_BASELINE_IMAGE_PASSES(currentTestName() + "_Removed");
 }
 
-// MaterialX as layered materials
-// Disabled as this testcase fails with error in MaterialGenerator::generate
+// MaterialX as layered materials — enabled on non-Apple platforms.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMaterialMaterialXLayerTransforms)
+#else
 TEST_P(MaterialTest, TestMaterialMaterialXLayerTransforms)
+#endif
 {
     // This mtlx file requires support ADSK MaterialX support.
     if (!adskMaterialXSupport())
-        return;
-
-    // No MaterialX on HGI yet.
-    if (!isDirectX())
         return;
 
     auto pScene    = createDefaultScene();
@@ -1792,11 +2026,12 @@ TEST_P(MaterialTest, TestMaterialMaterialXLayerTransforms)
 }
 
 // Normal map image test.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestNormalMapMaterialX) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestNormalMapMaterialX)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "MaterialX is not supported on MacOS yet.";
 #endif
+{
     // Create the default scene (also creates renderer)
     auto pScene    = createDefaultScene();
     auto pRenderer = defaultRenderer();
@@ -1841,11 +2076,12 @@ TEST_P(MaterialTest, TestNormalMapMaterialX)
 }
 
 // Test object space normal in MaterialX.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestObjectSpaceMaterialX) // TODO: Fix and re-enable this test.
+#else
 TEST_P(MaterialTest, TestObjectSpaceMaterialX)
-{
-#if defined __APPLE__
-    GTEST_SKIP() << "MaterialX is not supported on MacOS yet.";
 #endif
+{
     // This mtlx file requires support ADSK MaterialX support.
     if (!adskMaterialXSupport())
         return;
@@ -1881,6 +2117,162 @@ TEST_P(MaterialTest, TestObjectSpaceMaterialX)
 
     // Render the scene and check baseline image.
     ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName() + "_ThreadMtlX", "Materials");
+}
+
+// Test Prism MaterialX materials — enabled on non-Apple platforms.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestPrismMaterialX)
+#else
+TEST_P(MaterialTest, TestPrismMaterialX)
+#endif
+{
+    // This mtlx file requires support ADSK materialX support.
+    if (!adskMaterialXSupport())
+        return;
+
+    // For now, only DXR supports the Prism materials.
+    // TODO: Re-enable once Vulkan is back to working.
+    if (!isDirectX())
+        return;
+
+    // Larger image so the material details are clearly visible.
+    createDefaultRenderer(256, 256);
+
+    // Fewer iterations than a large batch render; still gives stable per-material images.
+    setDefaultRendererPathTracingIterations(128);
+
+    // Path to the Prism MaterialX test files.
+    // Material name to MTLX filename mapping, ordered as in aggregatescene.usda.
+    // Format: { MaterialName, MtlxFilename }
+    // Standard Prism files follow the "Prism_NNN.mtlx" convention; custom files use their full name.
+    const vector<pair<string, string>> materialMappings = {
+        { "ATypeBulbFrosted800lm",          "Prism_414.mtlx"     },
+        { "Display7SegmentsLCDCyan",         "Prism_399.mtlx"     },
+        { "MarbleTranslucent",               "Prism_397.mtlx"     },
+        { "LeatherPerforatedYellow",         "Prism_360.mtlx"     },
+        { "BrassOld",                        "Prism_334.mtlx"     },
+        { "PlasticTexturedPolka",            "Prism_253.mtlx"     },
+        { "CherryGlossy",                    "Prism_247.mtlx"     },
+        { "SteelMeshWireSmall",              "Prism_227.mtlx"     },
+        { "GlassFrostedMedium",              "Prism_207.mtlx"     },
+        { "BaseMaterialGlazing",             "Prism_2023.mtlx"    },
+        { "ClearSafetypatternCurves",        "Prism_2022.mtlx"    },
+        { "ClearFrosted",                    "Prism_2016.mtlx"    },
+        { "GreySinglePaneHighReflectivity",  "Prism_2013.mtlx"    },
+        { "BronzeInsulating",                "Prism_2011.mtlx"    },
+        { "BlueGreenSinglePane",             "Prism_2004.mtlx"    },
+        { "ClearSinglePane",                 "Prism_2000.mtlx"    },
+        { "WaterCalmSea",                    "Prism_198.mtlx"     },
+        { "PolycarbonateBronze",             "Prism_171.mtlx"     },
+        { "GlassClouds",                     "Prism_159.mtlx"     },
+        { "GlassClear",                      "Prism_152.mtlx"     },
+        { "GraniteRed",                      "Prism_134.mtlx"     },
+        { "RubberWeathered",                 "Prism_132.mtlx"     },
+        { "PlasticGlossyGrey",               "Prism_119.mtlx"     },
+        { "PowderCoatRoughBlue",             "Prism_105.mtlx"     },
+        { "StainlessDiamondPlateTreadBrite", "Prism_066.mtlx"     },
+        { "CopperBrushedRadial",             "Prism_048.mtlx"     },
+        { "BrassPolished",                   "Prism_042.mtlx"     },
+        { "AluminumKnurled",                 "Prism_026.mtlx"     },
+        { "PaintMetalFlakeRed",              "Prism_013.mtlx"     },
+        { "PaintMetallicGreen",              "Prism_005.mtlx"     },
+        { "CarbonFiberTwill",                "Prism_002.mtlx"     },
+        { "WoodWalnut",                      "WoodWalnut.mtlx"    },
+    };
+
+    // Base path to the Prism test files in the Aurora test assets folder.
+    const string prismBasePath = dataPath() + "/Materials/Prism/";
+
+    // Setup asset paths with the Prism base path for texture loading.
+    setupAssetPaths({ prismBasePath });
+
+    // Render each material on its own centred teapot and compare to a per-material baseline.
+    for (const auto& [materialName, mtlxFilename] : materialMappings)
+    {
+        // Fresh scene for each material so there is no cross-contamination.
+        auto pScene    = createDefaultScene();
+        auto pRenderer = defaultRenderer();
+        if (!pRenderer)
+            return;
+
+#if defined(__APPLE__)
+        pRenderer->options().setBoolean("isGammaCorrectionEnabled", true);
+#endif
+
+        // Nice angled light that shows material colour and shape clearly.
+        defaultDistantLight()->values().setFloat(
+            Aurora::Names::LightProperties::kIntensity, 1.5f);
+        defaultDistantLight()->values().setFloat3(
+            Aurora::Names::LightProperties::kDirection,
+            value_ptr(glm::vec3(0.0f, -0.5f, 1.0f)));
+        defaultDistantLight()->values().setFloat3(
+            Aurora::Names::LightProperties::kColor, value_ptr(glm::vec3(1, 1, 1)));
+
+        // Load and apply the Prism MaterialX document.
+        string mtlxPath           = prismBasePath + mtlxFilename;
+        string processedMtlXStr   = loadAndProcessMaterialXFile(mtlxPath);
+        EXPECT_FALSE(processedMtlXStr.empty())
+            << "Failed to load MaterialX file: " << mtlxPath;
+        if (processedMtlXStr.empty())
+            continue;
+
+        Path material(materialName);
+        pScene->setMaterialType(material, Names::MaterialTypes::kMaterialX, processedMtlXStr);
+
+        // Place the teapot at the origin so it fills the default FOV nicely.
+        Path geometry = createTeapotGeometry(*pScene);
+        Path instance("Teapot");
+        Properties instProps;
+        instProps[Names::InstanceProperties::kMaterial] = material;
+        EXPECT_TRUE(pScene->addInstance(instance, geometry, instProps));
+
+        // Render and compare against the per-material baseline image.
+        ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(
+            currentTestName() + "_" + materialName, "Materials");
+    }
+}
+
+// Invalid image test.
+#if defined(__APPLE__)
+TEST_P(MaterialTest, DISABLED_TestMissingOrInvalidImageMaterialX) // TODO: Fix and re-enable this test.
+#else
+TEST_P(MaterialTest, TestMissingOrInvalidImageMaterialX)
+#endif
+{
+    // Create the default scene (also creates renderer)
+    auto pScene    = createDefaultScene();
+    auto pRenderer = defaultRenderer();
+
+    // If pRenderer is null this renderer type not supported, skip rest of the test.
+    if (!pRenderer)
+        return;
+
+    setupAssetPaths();
+
+    defaultDistantLight()->values().setFloat(Aurora::Names::LightProperties::kIntensity, 2.0f);
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kDirection, value_ptr(glm::vec3(0.0f, -0.25f, +1.0f)));
+    defaultDistantLight()->values().setFloat3(
+        Aurora::Names::LightProperties::kColor, value_ptr(glm::vec3(1, 1, 1)));
+
+    // Create geometry.
+    Path teapotPath = createTeapotGeometry(*pScene);
+
+    // Create material from mtlx document containing normal map.
+    string materialXFullPath   = dataPath() + "/Materials/MissingOrInvalidImageTest.mtlx";
+    string processedMtlXString = loadAndProcessMaterialXFile(materialXFullPath);
+    EXPECT_FALSE(processedMtlXString.empty());
+    const Path kMaterialPath = "InvalidImageMaterial";
+    pScene->setMaterialType(kMaterialPath, Names::MaterialTypes::kMaterialX, processedMtlXString);
+
+    // Create geometry with the material.
+    Properties instProps;
+    instProps[Names::InstanceProperties::kMaterial]  = kMaterialPath;
+    instProps[Names::InstanceProperties::kTransform] = mat4();
+    EXPECT_TRUE(pScene->addInstance(nextPath(), teapotPath, instProps));
+
+    // Render the scene and check baseline image.
+    ASSERT_BASELINE_IMAGE_PASSES_IN_FOLDER(currentTestName(), "Materials");
 }
 
 INSTANTIATE_TEST_SUITE_P(MaterialTests, MaterialTest, TEST_SUITE_RENDERER_TYPES());

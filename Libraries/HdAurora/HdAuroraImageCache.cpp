@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,8 +39,9 @@ Aurora::Path HdAuroraImageCache::acquireImage(
     Aurora::ImageDescriptor descriptor;
     descriptor.getData = [this, auroraImagePath, sFilePath, forceLinear](
                              Aurora::ImageData& dataOut, Aurora::AllocateBufferFunction alloc) {
-        // Get resolved image path from ArResolver.
-        std::string resolvedPath = ArGetResolver().CreateIdentifier(sFilePath);
+        // Get resolved image path from ArResolver, falling back to the path as given.
+        pxr::ArResolvedPath resolved = ArGetResolver().Resolve(sFilePath);
+        const string resolvedPath    = resolved ? resolved.GetPathString() : sFilePath;
 
         // Load image using resolved path, return false if none found.
         pxr::HioImageSharedPtr const image = pxr::HioImage::OpenForReading(resolvedPath);
@@ -54,6 +55,16 @@ Aurora::Path HdAuroraImageCache::acquireImage(
         // Fill in HIO storage struct.
         pxr::HioImage::StorageSpec imageData;
         auto hioFormat    = image->GetFormat();
+
+        // Check for corrupt/unsupported files that report invalid format or zero dimensions.
+        // This prevents null pointer writes when allocating zero-sized buffers.
+        if (hioFormat == pxr::HioFormatInvalid || image->GetBytesPerPixel() <= 0 ||
+            image->GetWidth() <= 0 || image->GetHeight() <= 0)
+        {
+            AU_ERROR("Unsupported or corrupt image file %s with resolved path %s",
+                sFilePath.c_str(), resolvedPath.c_str());
+            return false;
+        }
         imageData.width   = image->GetWidth();
         imageData.height  = image->GetHeight();
         imageData.depth   = 1;
@@ -111,7 +122,7 @@ Aurora::Path HdAuroraImageCache::acquireImage(
         {
             for (size_t idx = 0; idx < totalPixelSizeT; idx++)
             {
-                pPixelData[idx * 4 + 0] = pUnpaddedPixels[bppSizeT * bppSizeT + 0];
+                pPixelData[idx * 4 + 0] = pUnpaddedPixels[idx * bppSizeT + 0];
                 pPixelData[idx * 4 + 1] = bppSizeT > 1 ? pUnpaddedPixels[idx * bppSizeT + 1] : 0xFF;
                 pPixelData[idx * 4 + 2] = bppSizeT > 2 ? pUnpaddedPixels[idx * bppSizeT + 2] : 0xFF;
                 pPixelData[idx * 4 + 3] = 0xFF;

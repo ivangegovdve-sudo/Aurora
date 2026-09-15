@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -116,6 +116,25 @@ struct MaterialTypes
     /// MaterialX path material type.
     /// Document argument must be path to a MaterialX XML file.
     static AURORA_API const std::string kMaterialXPath;
+};
+
+/// Upscaler modes.
+/// A mode that the device cannot run is not an error: the renderer falls back to the next
+/// best thing, so an unrecognized name behaves as kNone rather than failing the render.
+struct UpscalerModes
+{
+    /// No upscaling; the path tracer renders at the display resolution. The default.
+    static AURORA_API const std::string kNone;
+
+    /// NVIDIA DLSS Super Resolution.
+    static AURORA_API const std::string kDLSS;
+
+    /// AMD FidelityFX Super Resolution.
+    static AURORA_API const std::string kFSR;
+
+    /// NVIDIA DLSS Ray Reconstruction, which replaces the denoiser rather than running
+    /// after it.
+    static AURORA_API const std::string kDLSSRayReconstruction;
 };
 
 /// Types of light.

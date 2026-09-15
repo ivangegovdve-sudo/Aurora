@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,10 +32,25 @@ static const char* kAppName = "Plasma";
 constexpr uint32_t kMaxSamples       = 1000;
 constexpr uint32_t kDenoisingSamples = 50;
 
+// Debug AOV modes, matching the kDebugMode* constants in RendererBase.h.
+constexpr unsigned int kDebugModeErrors     = 1;
+constexpr unsigned int kDebugModeDenoising  = 7;
+[[maybe_unused]] constexpr unsigned int kDebugModeValidation = 11;
+
 // Screenshot format string
 constexpr uint32_t kMaxScreenshots   = 1000;
 const string       kScreenshotFormat = "capture_%.3u.png";
 const string       kScreenshotHdrFormat = "capture_%.3u.hdr";
+
+// Maps an upscaler mode integer to its corresponding name string.
+static const string& upscalerModeName(int mode)
+{
+    static const string* const kNames[] = { &Aurora::Names::UpscalerModes::kNone,
+        &Aurora::Names::UpscalerModes::kDLSS, &Aurora::Names::UpscalerModes::kFSR,
+        &Aurora::Names::UpscalerModes::kDLSSRayReconstruction };
+
+    return *kNames[glm::clamp(mode, 0, 3)];
+}
 
 #if defined(INTERACTIVE_PLASMA) &&defined(WIN32)
 // Application constructor.
@@ -75,6 +90,15 @@ Plasma::Plasma(HINSTANCE hInstance, unsigned int width, unsigned int height)
 
         // Add the status report from the performance monitor.
         report << message;
+
+        // Always show denoising, the upscaler & its quality preset, and TAA status.
+        report << "  |  " << temporalStateLabel();
+
+        // Show transient option-change notification for ~3 seconds.
+        if (!_transientStatus.empty() && _transientStatusTimer.elapsed() < 3000.0f)
+            report << "  |  " << _transientStatus;
+        else
+            _transientStatus.clear();
 
         // Set the complete report as the window title.
         ::SetWindowTextW(_hwnd, Foundation::s2w(report.str()).c_str());
@@ -399,7 +423,24 @@ void Plasma::parseOptions(int argc, char* argv[])
         ("camera", "Camera file path to load (GLTF format)",cxxopts::value<string>())
         ("camera_id", "Camera id",cxxopts::value<int>())
         ("reference", "Use reference BSDF", cxxopts::value<bool>())
+        ("russian_roulette", "Enable Russian roulette path termination (default true)",
+            cxxopts::value<bool>())
+        ("update_benchmark",
+            "After rendering, time N scene-update round trips (instance transform, material "
+            "property) against a no-change baseline, and report each.",
+            cxxopts::value<int>())
+        ("update_benchmark_env",
+            "With --update_benchmark, also time swapping in this environment image once.",
+            cxxopts::value<string>())
         ("denoise", "Enable denoising", cxxopts::value<bool>())
+        ("upscaler_mode", "Upscaler mode (0=off, 1=DLSS4, 2=FSR, 3=DLSS Ray Reconstruction)",
+            cxxopts::value<int>())
+        ("temporal_resolve", "Enable the temporal AA resolve pass (default true)",
+            cxxopts::value<bool>())
+        ("upscaler_quality",
+            "Upscaler quality preset (0=Native, 1=Quality 1.5x, 2=Balanced 1.7x, "
+            "3=Performance 2.0x)",
+            cxxopts::value<int>())
         ("gamma_correction", "Enable gamma correction", cxxopts::value<bool>())
         ("renderer", "Renderer type ('dx for DirectX, hgi for HGI.)", cxxopts::value<string>())
         ("e,eye", "Camera eye position as comma-separated 3D vector (e.g. 1,2,3)", cxxopts::value<vector<float>>())
@@ -410,12 +451,18 @@ void Plasma::parseOptions(int argc, char* argv[])
         ("lightIntensity", "Directional light intensity", cxxopts::value<float>())
         ("output", "Output image file (if set will render once and exit)", cxxopts::value<string>())
         ("output_spp", "SPP count for the output image (if set will render once and exit)", cxxopts::value<int>())
+        ("output_frames", "Frame count for temporal denoising/upscaling output capture", cxxopts::value<int>())
+        ("debug_mode", "Debug AOV visualization mode for the output image (see kDebugMode* constants)", cxxopts::value<int>())
+        ("dump_frames_dir", "If set, dumps each individual frame of the output_frames loop as frame_NNN.png in this directory, for temporal jitter analysis", cxxopts::value<string>())
+        ("rotate_deg_per_frame", "If set (with dump_frames_dir), orbits the camera around its target by this many degrees each frame of the output_frames loop, WITHOUT resetting denoising history each frame (matching real interactive rotation), to allow direct visual inspection of temporal ghosting during continuous camera motion.", cxxopts::value<float>())
         ("performance_output", "Output performance data file", cxxopts::value<string>())
         ("dims", "Window dimensions", cxxopts::value<vector<int>>())
         ("fov", "Camera field of view in degrees.", cxxopts::value<float>())
         ("env", "Environment map path to load (lat-long format .HDR file)", cxxopts::value<string>())
         ("mtlx", "MaterialX document path to apply.",cxxopts::value<string>())
         ("loadMtlXForObj", "Try and load MaterialX documents for each OBJ material.",  cxxopts::value<bool>())
+        ("trace-depth", "Max path-tracing trace depth (number of bounces, clamped to [1,10]).", cxxopts::value<int>())
+        ("use-mdl", "Use the NVIDIA MDL SDK -based MaterialX code generator. Only effective on builds with ENABLE_MDL=ON.", cxxopts::value<bool>()->default_value("false"))
         ("h,help", "Print help");
     // clang-format on
 
@@ -487,6 +534,23 @@ bool Plasma::initialize()
     // Ensure images not flipped.
     _pRenderer->options().setBoolean("isFlipImageYEnabled", false);
 
+    // Honor --use-mdl by switching the MaterialX code generator.
+    // When ENABLE_MDL=OFF, the option is read but ignored by the renderer.
+    if (arguments.count("use-mdl") && arguments["use-mdl"].as<bool>())
+    {
+        _pRenderer->options().setBoolean("useMDLMaterialGenerator", true);
+    }
+    else
+    {
+        _pRenderer->options().setBoolean("useMDLMaterialGenerator", false);
+    }
+
+    if (arguments.count("trace-depth"))
+    {
+        _traceDepth = glm::clamp(arguments["trace-depth"].as<int>(), 1, 10);
+        _pRenderer->options().setInt("traceDepth", _traceDepth);
+    }
+
     // Return false (failed initialization) if a renderer could not be created.
     if (!_pRenderer)
     {
@@ -550,6 +614,53 @@ bool Plasma::initialize()
     {
         _isDenoisingEnabled = arguments["denoise"].as<bool>();
     }
+    if (_pArguments->count("russian_roulette") > 0)
+    {
+        _pRenderer->options().setBoolean(
+            "isRussianRouletteEnabled", arguments["russian_roulette"].as<bool>());
+    }
+    if (_pArguments->count("upscaler_mode") > 0)
+    {
+        _upscalerMode = arguments["upscaler_mode"].as<int>();
+
+        // Report unsupported modes rather than a silent fallback.
+        auto const support = _pRenderer->upscalerSupport(upscalerModeName(_upscalerMode));
+        if (!support.isSupported)
+        {
+            if (support.needsDriverUpdate)
+            {
+                ::infoMessage("Upscaler mode " + to_string(_upscalerMode) +
+                    " needs display driver " + to_string(support.minDriverVersionMajor) + "." +
+                    to_string(support.minDriverVersionMinor) +
+                    " or newer; the renderer will fall back.");
+            }
+            else
+            {
+                ::infoMessage("Upscaler mode " + to_string(_upscalerMode) +
+                    " is not available on this device; the renderer will fall back.");
+            }
+        }
+    }
+    if (_pArguments->count("temporal_resolve") > 0)
+    {
+        _isTemporalResolveEnabled = arguments["temporal_resolve"].as<bool>();
+        _pRenderer->options().setBoolean("isTemporalResolveEnabled", _isTemporalResolveEnabled);
+    }
+    // Propagate --denoise to the renderer for batch mode (--output --denoise).
+    if (_isDenoisingEnabled)
+    {
+        _pRenderer->options().setBoolean("isDenoisingEnabled", true);
+    }
+
+    if (_pArguments->count("upscaler_quality") > 0)
+    {
+        _upscalerQuality = arguments["upscaler_quality"].as<int>();
+        _pRenderer->options().setInt("upscalerQuality", _upscalerQuality);
+    }
+    if (_upscalerMode != 0)
+    {
+        _pRenderer->options().setString("upscalerMode", upscalerModeName(_upscalerMode));
+    }
 
     if (_pArguments->count("gamma_correction") > 0)
     {
@@ -590,14 +701,14 @@ bool Plasma::initialize()
     if (arguments.count("scene"))
     {
         string filePath = arguments["scene"].as<string>();
-        bFileLoaded     = loadSceneFile(filePath);
-    }
-
-    // Get the MaterialX file path from the mtlx argument.
-    if (arguments.count("mtlx"))
-    {
-        string mtlxPath = arguments["mtlx"].as<string>();
-        loadMaterialXFile(mtlxPath);
+        if (arguments.count("use-mdl") && arguments["use-mdl"].as<bool>())
+        {
+            // The MDL pipeline resolves resource files (textures, MDL
+            // modules) relative to a list of search paths.
+            string absParentDir = std::filesystem::absolute(filePath).parent_path().string();
+            _pRenderer->addMdlSearchPath(absParentDir);
+        }
+        bFileLoaded = loadSceneFile(filePath);
     }
 
     // If a file was not loaded, create a sample scene.
@@ -625,6 +736,14 @@ bool Plasma::initialize()
         // Fit the camera to the scene bounds, with a special direction for this scene.
         static const vec3 kDefaultDirection = normalize(vec3(0.0f, 0.0f, -1.0f));
         _camera.fit(_sceneContents.bounds, kDefaultDirection);
+    }
+
+    // Get the MaterialX file path from the mtlx argument, and apply it to every instance in the
+    // scene (matching the interactive drag-and-drop behavior).
+    if (arguments.count("mtlx"))
+    {
+        string mtlxPath = arguments["mtlx"].as<string>();
+        applyMaterialXFile(mtlxPath);
     }
 
     _pDistantLight = _pScene->addLightPointer(Aurora::Names::LightTypes::kDistantLight);
@@ -803,9 +922,11 @@ bool Plasma::addDecal(const string& decalMtlXPath)
 void Plasma::updateNewScene()
 {
     // Reset the sample counter, as the new scene may have very different complexity. Also reset
-    // the animation timer and frame number.
+    // the animation timer and frame number. Always start with animation off so that each new
+    // scene begins still.
     _sampleCounter.reset();
-    _animationTimer.reset(!_isAnimating);
+    _isAnimating = false;
+    _animationTimer.reset(true); // reset suspended (no rotation)
     _frameNumber = 0;
 
     // Setup environment for new scene.
@@ -876,15 +997,12 @@ void Plasma::updateGroundPlane()
 
 void Plasma::updateSampleCount()
 {
-    constexpr unsigned int kDebugModeErrors    = 1;
-    constexpr unsigned int kDebugModeDenoising = 7;
-
     // Set the maximum number of samples based on the debug mode and denoising state:
     // - If denoising is enabled with a debug mode that shows denoising results, use the denoising
     //   sample count.
     // - Otherwise if the debug mode doesn't use the output (beauty) AOV, use a single sample.
     // - Otherwise use the maximum number of samples, i.e. for full path tracing.
-    bool isDenoisingDebugMode = _isDenoisingEnabled &&
+    bool isDenoisingDebugMode = (_isDenoisingEnabled || _upscalerMode != 0) &&
         (_debugMode <= kDebugModeErrors || _debugMode >= kDebugModeDenoising);
     uint32_t sampleCount = isDenoisingDebugMode ? kDenoisingSamples
                                                 : (_debugMode > kDebugModeErrors ? 1 : kMaxSamples);
@@ -907,7 +1025,8 @@ void Plasma::update()
     
     _camera.update(1/30.f);
 #if defined(INTERACTIVE_PLASMA)
-    if(_camera.isMoving()) {
+    if (_camera.isMoving())
+    {
         requestUpdate();
         _performanceMonitor.beginFrame(true);
     }
@@ -925,7 +1044,23 @@ void Plasma::update()
     // user wait too long, and is most effective on simple scenes.
     Foundation::CPUTimer firstFrameTimer;
     uint32_t sampleStart = 0;
-    uint32_t sampleCount = _sampleCounter.update(sampleStart, _shouldRestart);
+    uint32_t sampleCount;
+
+    if (_isDenoisingEnabled || _upscalerMode != 0)
+    {
+        // A temporal stage accumulates across frames rather than within one, so it wants one
+        // sample per frame. _sampleCounter is bypassed rather than called and ignored: it
+        // estimates samples per frame from recent render times, so recording elapsed time
+        // against an estimate that was never used corrupts its bookkeeping until it reports
+        // rendering complete and render() is skipped. It resumes cleanly if the temporal stage
+        // is later turned off.
+        sampleCount = 1;
+    }
+    else
+    {
+        sampleCount = _sampleCounter.update(sampleStart, _shouldRestart);
+    }
+
     if (sampleCount > 0)
     {
         _pRenderer->render(sampleStart, sampleCount);
@@ -975,6 +1110,46 @@ void Plasma::requestUpdate(bool shouldRestart)
 #endif
 }
 
+string Plasma::temporalStateLabel() const
+{
+    static const char* kModeNames[]    = { "off", "DLSS4", "FSR", "DLSS-RR" };
+    static const char* kQualityNames[] = { "native", "quality", "balanced", "perf" };
+
+    // Report actual status: renderer denoises when Super Resolution is active and skips TAA
+    // resolve when a vendor upscaler is active. Both are derived here, not read back.
+    bool const isSuperResolution = _upscalerMode == 1 || _upscalerMode == 2;
+    bool const isDenoising       = _isDenoisingEnabled || isSuperResolution;
+    bool const isTAARunning      = _isTemporalResolveEnabled && isDenoising && _upscalerMode == 0;
+
+    stringstream label;
+    label << "denoise:" << (isDenoising ? "on" : "off");
+    label << " upscale:" << kModeNames[glm::clamp(_upscalerMode, 0, 3)];
+    if (_upscalerMode != 0)
+        label << "/" << kQualityNames[glm::clamp(_upscalerQuality, 0, 3)];
+    label << " TAA:" << (isTAARunning ? "on" : (_isTemporalResolveEnabled ? "idle" : "off"));
+
+    return label.str();
+}
+
+// Sets a transient status message that appears in the title bar for ~3 seconds.
+void Plasma::setTransientStatus(const string& msg)
+{
+    _transientStatus = msg;
+    _transientStatusTimer.reset();
+}
+
+// Dumps the current viewport camera parameters.
+void Plasma::dumpViewportCameraParameters()
+{
+    float fovDeg   = degrees(_camera.fov());
+    string message = Foundation::sFormat(
+        "Viewport camera: --eye=%0.4f,%0.4f,%0.4f --target=%0.4f,%0.4f,%0.4f --fov=%0.4f",
+        _camera.eye().x, _camera.eye().y, _camera.eye().z, _camera.target().x, _camera.target().y,
+        _camera.target().z, fovDeg);
+    ::infoMessage(message);
+    setTransientStatus("Viewport camera dumped to log");
+}
+
 // Toggles the animating state of the application.
 void Plasma::toggleAnimation()
 {
@@ -988,6 +1163,8 @@ void Plasma::toggleAnimation()
     {
         _animationTimer.suspend();
     }
+
+    setTransientStatus(string("Animation: ") + (_isAnimating ? "ON" : "OFF"));
 
     // Request an update.
     requestUpdate();
@@ -1050,6 +1227,7 @@ void Plasma::toggleVSync()
     // Toggle the flag and set it on the Aurora window.
     _isVSyncEnabled = !_isVSyncEnabled;
     _pWindow->setVSyncEnabled(_isVSyncEnabled);
+    setTransientStatus(string("V-Sync: ") + (_isVSyncEnabled ? "ON" : "OFF"));
 }
 
 // Select a different unit.
@@ -1061,6 +1239,7 @@ void Plasma::adjustUnit(int increment)
 
     // Set the units option.
     _pRenderer->options().setString("units", _units[_currentUnitIndex]);
+    setTransientStatus("Units: " + _units[_currentUnitIndex]);
 
     // Request an update.
     requestUpdate();
@@ -1074,6 +1253,7 @@ void Plasma::adjustExposure(float increment)
     _exposure += increment;
     vec3 brightness(pow(2.0f, _exposure));
     _pRenderer->options().setFloat3("brightness", value_ptr(brightness));
+    setTransientStatus("Exposure: " + to_string(_exposure).substr(0, 4) + " EV");
 
     // Request an update.
     requestUpdate();
@@ -1089,6 +1269,7 @@ void Plasma::adjustMaxLuminanceExposure(float increment)
     _maxLuminanceExposure += increment;
     float maxLuminance = kBaseMaxLuminance * pow(2.0f, _maxLuminanceExposure);
     _pRenderer->options().setFloat("maxLuminance", maxLuminance);
+    setTransientStatus("Max Luminance: " + to_string(static_cast<int>(maxLuminance)));
 
     // Request an update.
     requestUpdate();
@@ -1199,38 +1380,6 @@ bool Plasma::loadSceneFile(const string& filePath)
     auto directory = filesystem::path(filePath).parent_path();
     filesystem::current_path(directory);
 
-    // TODO: when we support full scene loading (and not just cameras) remove this block and use the block below to load gltf and glb
-    std::filesystem::path stdFilePath = filePath;
-    std::filesystem::path foundExtension = stdFilePath.extension();
-    if(foundExtension.compare(".gltf") == 0 || foundExtension.compare(".glb") == 0) {
-        if (!loadSceneFunc(_pRenderer.get(), _pScene.get(), filePath, _sceneContents))
-        {
-            ::errorMessage("Unable to load the specified scene file: \"" + filePath + "\"");
-            return false;
-        }
-        // Report the load time.
-        ::infoMessage("Loaded scene file \"" + filePath + "\" in " +
-            to_string(static_cast<int>(loadTimer.elapsed())) + " ms.");
-
-#if defined(INTERACTIVE_PLASMA)
-        if(_sceneContents.cameras.size() > 0) {
-            if (_pArguments->count("camera_id"))
-            {
-                switchToCamera((*_pArguments)["camera_id"].as<int>());
-                
-            }
-            else
-            {
-                switchToCamera(0);
-            }
-        }
-        else {
-            switchToCamera(0);
-        }
-#endif
-        return true;
-    }
-    
     // Create new empty scene
     _pScene = _pRenderer->createScene();
 
@@ -1261,6 +1410,176 @@ bool Plasma::loadSceneFile(const string& filePath)
 #endif
 
     return true;
+}
+
+void Plasma::setOutputTargets(const Aurora::IRenderBufferPtr& pRenderBuffer,
+    const uvec2& dimensions, bool includeAuxiliaryAOVs)
+{
+    if (!includeAuxiliaryAOVs)
+    {
+        _pRenderer->setTargets({ { Aurora::AOV::kFinal, pRenderBuffer } });
+        return;
+    }
+
+    for (size_t i = 0; i < 6; i++)
+    {
+        // The NDC depth AOV (index 0 below) is single-channel; every other auxiliary AOV is RGBA.
+        // The renderer requires Float_R for depth: see PTRenderer::updateOutputResources().
+        Aurora::ImageFormat const aovFormat =
+            (i == 0) ? Aurora::ImageFormat::Float_R : Aurora::ImageFormat::Float_RGBA;
+        _pAOVRenderBuffer[i] =
+            _pRenderer->createRenderBuffer(dimensions.x, dimensions.y, aovFormat);
+    }
+
+    _pRenderer->setTargets(
+        { { Aurora::AOV::kFinal, pRenderBuffer }, { Aurora::AOV::kDepthNDC, _pAOVRenderBuffer[0] },
+            { Aurora::AOV::kMotion, _pAOVRenderBuffer[1] },
+            { Aurora::AOV::kDiffuseAlbedo, _pAOVRenderBuffer[2] },
+            { Aurora::AOV::kSpecularAlbedo, _pAOVRenderBuffer[3] },
+            { Aurora::AOV::kNormal, _pAOVRenderBuffer[4] },
+            { Aurora::AOV::kRoughness, _pAOVRenderBuffer[5] } });
+}
+
+// Writes the current contents of a render buffer as frame_NNN.png in the given directory.
+static void dumpFrame(const Aurora::IRenderBufferPtr& pRenderBuffer, const uvec2& dimensions,
+    const string& directory, int frame)
+{
+    size_t stride     = 0;
+    const void* pData = pRenderBuffer->data(stride);
+    char name[64];
+    snprintf(name, sizeof(name), "/frame_%03d.png", frame);
+    ::stbi_write_png(
+        (directory + name).c_str(), dimensions.x, dimensions.y, 4, pData, static_cast<int>(stride));
+}
+
+// Renders the frame sequence a batch capture needs, honoring --output_frames,
+// --dump_frames_dir, --rotate_deg_per_frame and --output_spp. The final frame is left in
+// pRenderBuffer for saveImage() to write out.
+void Plasma::renderOutputFrames(
+    const Aurora::IRenderBufferPtr& pRenderBuffer, const uvec2& dimensions)
+{
+    const bool hasFrameCount = _pArguments->count("output_frames") != 0;
+    const bool dumpFrames    = _pArguments->count("dump_frames_dir") != 0;
+    const string dumpDir = dumpFrames ? (*_pArguments)["dump_frames_dir"].as<string>() : string();
+
+    // Render frame sequences through the temporal path for comparable frame costs.
+    if (_isDenoisingEnabled || _upscalerMode != 0 || hasFrameCount)
+    {
+        const int frameCount =
+            std::max(hasFrameCount ? (*_pArguments)["output_frames"].as<int>() : 32, 1);
+
+        // Reset history only when orbiting starts, preserving reprojection during motion.
+        const bool isOrbiting = _pArguments->count("rotate_deg_per_frame") != 0;
+        const float degreesPerFrame =
+            isOrbiting ? (*_pArguments)["rotate_deg_per_frame"].as<float>() : 0.0f;
+
+        for (int frame = 0; frame < frameCount; ++frame)
+        {
+            if (isOrbiting && frame > 0)
+            {
+                vec3 offset = _camera.eye() - _camera.target();
+                mat4 orbit  = rotate(radians(degreesPerFrame), _camera.upDir());
+                _camera.setView(
+                    _camera.target() + vec3(orbit * vec4(offset, 0.0f)), _camera.target());
+                mat4 frameView = _camera.viewMatrix();
+                mat4 frameProj = _camera.projMatrix();
+                _pRenderer->setCamera(value_ptr(frameView), value_ptr(frameProj));
+            }
+
+            _pRenderer->render(0, 1);
+            if (dumpFrames)
+            {
+                _pRenderer->waitForTask();
+                dumpFrame(pRenderBuffer, dimensions, dumpDir, frame);
+            }
+        }
+        return;
+    }
+
+    if (!_pArguments->count("output_spp"))
+    {
+        _pRenderer->render(0, 1000);
+        return;
+    }
+
+    const int outputSpp = (*_pArguments)["output_spp"].as<int>();
+    if (!dumpFrames)
+    {
+        _pRenderer->render(0, outputSpp);
+        return;
+    }
+
+    // Dump each sample for progressive-stability comparisons.
+    for (int sample = 0; sample < outputSpp; ++sample)
+    {
+        _pRenderer->render(sample, 1);
+        _pRenderer->waitForTask();
+        dumpFrame(pRenderBuffer, dimensions, dumpDir, sample);
+    }
+}
+
+// Times --update_benchmark scene-update round trips against a no-change baseline, and reports.
+void Plasma::runUpdateBenchmark()
+{
+    if (!_pArguments->count("update_benchmark") || _sceneContents.instances.empty())
+        return;
+
+    // Time change, render, and wait against a no-change baseline.
+    const int iterations = std::max(1, (*_pArguments)["update_benchmark"].as<int>());
+    auto timeLoop        = [&](const std::function<void(int)>& change) {
+        const auto start = std::chrono::steady_clock::now();
+        for (int i = 0; i < iterations; i++)
+        {
+            change(i);
+            _pRenderer->render(0, 1);
+            _pRenderer->waitForTask();
+        }
+        const std::chrono::duration<double, std::milli> elapsed =
+            std::chrono::steady_clock::now() - start;
+        return elapsed.count() / iterations;
+    };
+
+    const double baseline = timeLoop([](int) {});
+
+    const Aurora::Path instancePath = _sceneContents.instances[0].def.path;
+    const double transformMs        = timeLoop([&](int i) {
+        mat4 transform = translate(vec3(0.0f, 0.0001f * static_cast<float>(i + 1), 0.0f));
+        _pScene->setInstanceProperties(
+            instancePath, { { Aurora::Names::InstanceProperties::kTransform, transform } });
+    });
+
+    // The material path lives on the instance definition; there is no separate list.
+    double materialMs      = -1.0;
+    const auto& firstProps = _sceneContents.instances[0].def.properties;
+    const auto materialIt  = firstProps.find(Aurora::Names::InstanceProperties::kMaterial);
+    if (materialIt != firstProps.end())
+    {
+        const Aurora::Path materialPath = materialIt->second.asString();
+        materialMs                      = timeLoop([&](int i) {
+            const float shade = 0.5f + 0.001f * static_cast<float>(i % 100);
+            _pScene->setMaterialProperties(
+                materialPath, { { "base_color", vec3(shade, shade, shade) } });
+        });
+    }
+
+    // Environment swaps are measured once; cached repeats have no cost.
+    double environmentMs = -1.0;
+    if (_pArguments->count("update_benchmark_env"))
+    {
+        const string environmentFile = (*_pArguments)["update_benchmark_env"].as<string>();
+        const auto start             = std::chrono::steady_clock::now();
+        loadEnvironmentImageFile(environmentFile);
+        _pRenderer->render(0, 1);
+        _pRenderer->waitForTask();
+        const std::chrono::duration<double, std::milli> elapsed =
+            std::chrono::steady_clock::now() - start;
+        environmentMs = elapsed.count();
+    }
+
+    ::infoMessage("[UPDATE] instances=" + to_string(_sceneContents.instances.size()) +
+        " baseline=" + to_string(baseline) + "ms  transform=" + to_string(transformMs - baseline) +
+        "ms  material=" + to_string(materialMs < 0.0 ? materialMs : materialMs - baseline) +
+        "ms  environment=" + to_string(environmentMs) + "ms");
 }
 
 void Plasma::saveImage(const wstring& filePath, const uvec2& dimensions)
@@ -1295,48 +1614,38 @@ void Plasma::saveImage(const wstring& filePath, const uvec2& dimensions)
             dimensions.x, dimensions.y, Aurora::ImageFormat::Integer_RGBA);
     }
 
-    // Render with the render buffer, then restore the window as the renderer's final target.
-    for (size_t i = 0; i < 6; i++)
-    {
-        _pAOVRenderBuffer[i] = _pRenderer->createRenderBuffer(_dimensions.x, _dimensions.y, Aurora::ImageFormat::Float_RGBA);
-    }
-    _pRenderer->setTargets({ { Aurora::AOV::kFinal, pRenderBuffer },
-                             { Aurora::AOV::kDepthNDC, _pAOVRenderBuffer[0]},
-                             { Aurora::AOV::kMotion, _pAOVRenderBuffer[1]},
-                             { Aurora::AOV::kDiffuseAlbedo, _pAOVRenderBuffer[2]},
-                             { Aurora::AOV::kSpecularAlbedo, _pAOVRenderBuffer[3]},
-                             { Aurora::AOV::kNormal, _pAOVRenderBuffer[4]},
-                             { Aurora::AOV::kRoughness, _pAOVRenderBuffer[5]},
-    });
-    Foundation::CPUTimer firstFrameTimer;
-    if (_pArguments->count("output_spp"))
-    {
-        _pRenderer->render(0, (*_pArguments)["output_spp"].as<int>());
-    }
-    else
-    {
-        _pRenderer->render(0, 1000);
-    }
+    const bool needsAuxiliaryAOVs = _isDenoisingEnabled || _upscalerMode != 0;
+    setOutputTargets(pRenderBuffer, dimensions, needsAuxiliaryAOVs);
 
-    firstFrameTimer.suspend();
+    if (_pArguments->count("debug_mode"))
+        _pRenderer->options().setInt("debugMode", (*_pArguments)["debug_mode"].as<int>());
+
+    Foundation::CPUTimer renderTimer;
+    renderOutputFrames(pRenderBuffer, dimensions);
+    _pRenderer->waitForTask();
+    renderTimer.suspend();
+
+    runUpdateBenchmark();
+
     if (_pArguments->count("performance_output"))
     {
         std::ofstream myfile;
         string outputFile = (*_pArguments)["performance_output"].as<string>();
         myfile.open (outputFile);
-        myfile << firstFrameTimer.elapsed() << "\n";
+        myfile << renderTimer.elapsed() << "\n";
         myfile.close();
     }
 
-    ::infoMessage("Rendering completed in " +
-            to_string(static_cast<int>(firstFrameTimer.elapsed())) + " ms.");
+    ::infoMessage(
+        "Rendering completed in " + to_string(static_cast<int>(renderTimer.elapsed())) + " ms.");
 
     // Get the data from the render buffer, and save it to a PNG file with the specified path.
     size_t stride     = 0;
     const void* pData = pRenderBuffer->data(stride);
     if (filePath.back() == 'r')
     {
-        int res = ::stbi_write_hdr(Foundation::w2s(filePath).c_str(), _dimensions.x, _dimensions.y, 4, static_cast<const float*>(pData));
+        int res = ::stbi_write_hdr(Foundation::w2s(filePath).c_str(), dimensions.x, dimensions.y, 4,
+            static_cast<const float*>(pData));
         AU_ASSERT(res, "Failed to write HDR screenshot: %s", filePath);
     }
     else
@@ -1351,37 +1660,14 @@ void Plasma::saveImage(const wstring& filePath, const uvec2& dimensions)
 Aurora::Path Plasma::loadMaterialXFile(const string& filePath)
 {
     Aurora::Path materialPath = "MaterialX:" + filePath;
-    // Load the MaterialX document into a string.
+
     ifstream mtlXStream(filePath);
     if (mtlXStream.fail())
         return "";
+    mtlXStream.close();
 
-    string mtlXString((istreambuf_iterator<char>(mtlXStream)), istreambuf_iterator<char>());
-
-    // Work out Autodesk Material Library path relative to Platform root.
-    const string kSourceRoot = TOSTRING(PLATFORM_ROOT_PATH);
-    const string mtlLibPath =
-        kSourceRoot + "/Renderers/Tests/Data/Materials/AutodeskMaterialLibrary/";
-
-    // Work out MaterialX resource path relative to Externals root.
-    const string kExternalsRoot    = TOSTRING(EXTERNALS_ROOT_PATH);
-    const string mtlxResourcesPath = kExternalsRoot + "/git/materialx/resources";
-
-    // Replace the Autodesk Material Library in the loaded document.
-    // In the ProteinX files this is referenced as C:/Program Files/Common Files/Autodesk Shared.
-    // TODO: Should have file load callback in Aurora to avoid this.
-    string processedMtlXString = regex_replace(
-        mtlXString, regex("C:.Program Files.+Common Files.Autodesk Shared."), mtlLibPath);
-
-    // Replace the MaterialX resource path in the loaded document.
-    // In the MaterialX sample document this is referenced as ../../..
-    // TODO: Should have file load callback in Aurora to avoid this.
-    processedMtlXString =
-        regex_replace(processedMtlXString, regex(R"(\.\.\/\.\.\/\.\.)"), mtlxResourcesPath);
-
-    // Create a new material from the MaterialX document.
-    _pScene->setMaterialType(
-        materialPath, Aurora::Names::MaterialTypes::kMaterialX, processedMtlXString);
+    // Preserve the path for relative texture references.
+    _pScene->setMaterialType(materialPath, Aurora::Names::MaterialTypes::kMaterialXPath, filePath);
 
     return materialPath;
 }
@@ -1480,9 +1766,9 @@ LRESULT Plasma::processMessage(UINT message, WPARAM wParam, LPARAM lParam)
         update();
         ::EndPaint(_hwnd, &ps);
 
-        // Request another update if rendering is not converged or animation is being performed.
-        // For the latter, also request a restart, i.e. start rendering from the first sample.
-        if (!_sampleCounter.isComplete() || _isAnimating)
+        // Keep painting while temporal rendering is active.
+        if (!_sampleCounter.isComplete() || _isAnimating || _isDenoisingEnabled ||
+            _upscalerMode != 0)
         {
             requestUpdate(_isAnimating);
         }
@@ -1886,6 +2172,11 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
         _isDirectionalLightEnabled = !_isDirectionalLightEnabled;
         requestUpdate();
     }
+    // P: Dump the current viewport camera parameters.
+    else if ([characters caseInsensitiveCompare:@"P"] == NSOrderedSame)
+    {
+        dumpViewportCameraParameters();
+    }
     // +: Increase exposure.
     // CTRL+: Increase max luminance exposure.
     else if([characters caseInsensitiveCompare:@"="] == NSOrderedSame) {
@@ -1964,6 +2255,7 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
     case 0x42:
         _isReferenceBSDFEnabled = !_isReferenceBSDFEnabled;
         _pRenderer->options().setBoolean("isReferenceBSDFEnabled", _isReferenceBSDFEnabled);
+        setTransientStatus(string("Reference BSDF: ") + (_isReferenceBSDFEnabled ? "ON" : "OFF"));
         requestUpdate();
         break;
 
@@ -1972,6 +2264,7 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
         switchToCamera(0);
         _isOrthoProjection = !_isOrthoProjection;
         _camera.setIsOrtho(_isOrthoProjection);
+        setTransientStatus(string("Projection: ") + (_isOrthoProjection ? "Orthographic" : "Perspective"));
         requestUpdate();
         break;
 
@@ -1983,11 +2276,13 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
             _isDenoisingEnabled = !_isDenoisingEnabled;
             options.setBoolean("isDenoisingEnabled", _isDenoisingEnabled);
             updateSampleCount();
+            setTransientStatus(string("Denoising: ") + (_isDenoisingEnabled ? "ON" : "OFF"));
         }
         else
         {
             _isDiffuseOnlyEnabled = !_isDiffuseOnlyEnabled;
             options.setBoolean("isDiffuseOnlyEnabled", _isDiffuseOnlyEnabled);
+            setTransientStatus(string("Diffuse Only: ") + (_isDiffuseOnlyEnabled ? "ON" : "OFF"));
         }
         requestUpdate();
         break;
@@ -2014,10 +2309,12 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
         if (::GetAsyncKeyState(VK_SHIFT) != 0)
         {
             _isGroundPlaneReflectionEnabled = !_isGroundPlaneReflectionEnabled;
+            setTransientStatus(string("Ground Reflection: ") + (_isGroundPlaneReflectionEnabled ? "ON" : "OFF"));
         }
         else
         {
             _isGroundPlaneShadowEnabled = !_isGroundPlaneShadowEnabled;
+            setTransientStatus(string("Ground Shadow: ") + (_isGroundPlaneShadowEnabled ? "ON" : "OFF"));
         }
         updateGroundPlane();
         requestUpdate();
@@ -2028,14 +2325,19 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
     // - 1: Environment light sampling.
     // - 2: Multiple importance sampling (MIS).
     case 0x49:
+    {
+        static const char* kISModeNames[] = { "BSDF", "Environment", "MIS" };
         _importanceSamplingMode = (_importanceSamplingMode + 1) % 3;
         _pRenderer->options().setInt("importanceSamplingMode", _importanceSamplingMode);
+        setTransientStatus(string("Importance Sampling: ") + kISModeNames[_importanceSamplingMode]);
         requestUpdate();
         break;
+    }
 
     // L: Toggle the directional light.
     case 0x4c:
         _isDirectionalLightEnabled = !_isDirectionalLightEnabled;
+        setTransientStatus(string("Directional Light: ") + (_isDirectionalLightEnabled ? "ON" : "OFF"));
         requestUpdate();
         break;
 
@@ -2068,8 +2370,14 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
         {
             _isForceOpaqueShadowsEnabled = !_isForceOpaqueShadowsEnabled;
             options.setBoolean("isForceOpaqueShadowsEnabled", _isForceOpaqueShadowsEnabled);
+            setTransientStatus(string("Opaque Shadows: ") + (_isForceOpaqueShadowsEnabled ? "ON" : "OFF"));
             requestUpdate();
         }
+        break;
+
+    // P: Dump the current viewport camera parameters.
+    case 0x50:
+        dumpViewportCameraParameters();
         break;
 
     // R: Reset materials to original ones.
@@ -2086,6 +2394,7 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
     case 0x54:
         _isToneMappingEnabled = !_isToneMappingEnabled;
         options.setBoolean("isToneMappingEnabled", _isToneMappingEnabled);
+        setTransientStatus(string("Tone Mapping: ") + (_isToneMappingEnabled ? "ON" : "OFF"));
         requestUpdate();
         break;
 
@@ -2094,9 +2403,24 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
         toggleVSync();
         break;
 
-    // U: Increment units.
+    // U: Cycle through the upscaler modes:
+    // - 0: Off
+    // - 1: DLSS4 (Super Resolution)
+    // - 2: FSR
+    // - 3: DLSS Ray Reconstruction (replaces NRD rather than running after it)
+    // SHIFT-U: Increment units.
     case 0x55:
-        adjustUnit(+1);
+        if (::GetAsyncKeyState(VK_SHIFT) != 0)
+        {
+            adjustUnit(+1);
+        }
+        else
+        {
+            _upscalerMode = (_upscalerMode + 1) % 4;
+            options.setString("upscalerMode", upscalerModeName(_upscalerMode));
+            updateSampleCount();
+            requestUpdate();
+        }
         break;
 
     // W: Add decal from MaterialX file.
@@ -2111,6 +2435,43 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
             addDecal(_decalMaterialXFilePath);
         }
         break;
+
+    // N: Show NRD's validation overlay. Its own key, because the number-key AOV block above is
+    // limited to modes 0-10 by the digits available.
+    case 0x4e:
+    {
+        _debugMode = (_debugMode == kDebugModeValidation) ? 0 : kDebugModeValidation;
+        options.setInt("debugMode", _debugMode);
+        setTransientStatus(_debugMode == kDebugModeValidation ? "NRD validation overlay: ON"
+                                                              : "NRD validation overlay: OFF");
+        updateSampleCount();
+        requestUpdate();
+        break;
+    }
+
+    // A: Toggle the temporal anti-aliasing resolve pass, which turns the sub-pixel camera jitter
+    // into anti-aliasing when denoising is on and no vendor upscaler is active. With it off the
+    // renderer stops jittering entirely; see PTRenderer::hasTemporalResolve.
+    case 0x41:
+    {
+        _isTemporalResolveEnabled = !_isTemporalResolveEnabled;
+        bool const isEnabled      = _isTemporalResolveEnabled;
+        options.setBoolean("isTemporalResolveEnabled", isEnabled);
+        requestUpdate();
+        break;
+    }
+
+    // Q: Cycle the upscaler quality preset, i.e. the render resolution relative to the display:
+    // Native (1.0x) -> Quality (1.5x) -> Balanced (1.7x) -> Performance (2.0x). This is what buys
+    // performance from DLSS/FSR, since primary-ray cost scales with pixel count. No effect while
+    // the upscaler is off, as nothing else can reconstruct the missing resolution.
+    case 0x51:
+    {
+        _upscalerQuality = (_upscalerQuality + 1) % 4;
+        options.setInt("upscalerQuality", _upscalerQuality);
+        requestUpdate();
+        break;
+    }
 
     // Y: Decrement units
     case 0x59:
@@ -2149,6 +2510,7 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
     case 0xdb:
         _traceDepth = glm::max(1, _traceDepth - 1);
         options.setInt("traceDepth", _traceDepth);
+        setTransientStatus("Trace Depth: " + to_string(_traceDepth));
         requestUpdate();
         break;
 
@@ -2156,6 +2518,7 @@ void Plasma::onKeyPressed(NSString* characters, NSEventModifierFlags modifierFla
     case 0xdd:
         _traceDepth = glm::min(10, _traceDepth + 1);
         options.setInt("traceDepth", _traceDepth);
+        setTransientStatus("Trace Depth: " + to_string(_traceDepth));
         requestUpdate();
         break;
     }
@@ -2235,8 +2598,11 @@ void Plasma::onMouseWheel(int delta, WPARAM /*buttons*/)
     }
 }
 
+#endif
+
+#if defined(INTERACTIVE_PLASMA)
 // Handles window size changes.
-void Plasma::onSizeChanged(UINT clientWidth, UINT clientHeight)
+void Plasma::onSizeChanged(uint32_t clientWidth, uint32_t clientHeight)
 {
     // Do nothing if the dimensions have not changed.
     if (clientHeight == _dimensions.y && clientWidth == _dimensions.x)
@@ -2249,20 +2615,32 @@ void Plasma::onSizeChanged(UINT clientWidth, UINT clientHeight)
     // NOTE: Restoring the window will invalidate the window and restart the paint messages.
     if (clientWidth == 0 || clientHeight == 0)
     {
+#if defined(WIN32)
         ::ValidateRect(_hwnd, nullptr);
+#endif
         return;
     }
 
-    // Resize the Aurora window and update the camera.
+    // Resize active render targets and rebuild size-dependent renderer resources.
     _dimensions = uvec2(clientWidth, clientHeight);
-    _pWindow->resize(clientWidth, clientHeight);
+#if defined(WIN32)
+    if (_pWindow)
+    {
+        _pWindow->resize(clientWidth, clientHeight);
+    }
+#else
+    // On macOS Plasma presents the current Aurora texture into MTKView, so resizing only needs
+    // to update the camera and restart accumulation.
+#endif
     _camera.setDimensions(_dimensions);
     _performanceMonitor.setDimensions(_dimensions);
 
-    // Request an update.
-    requestUpdate();
+    // Changing resolution invalidates the accumulated image.
+    requestUpdate(true);
 }
+#endif // INTERACTIVE_PLASMA
 
+#if defined(INTERACTIVE_PLASMA) && defined(WIN32)
 // Application entry point.
 int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE /*hPrevInstance*/,
     _In_ PWSTR /*lpCmdLine*/, _In_ int /*nCmdShow*/)

@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,31 @@
 #include "SceneBase.h"
 
 BEGIN_AURORA
+
+int upscalerModeFromName(const string& name)
+{
+    if (name == Names::UpscalerModes::kNone)
+        return kUpscalerModeNone;
+    if (name == Names::UpscalerModes::kDLSS)
+        return kUpscalerModeDLSS;
+    if (name == Names::UpscalerModes::kFSR)
+        return kUpscalerModeFSR;
+    if (name == Names::UpscalerModes::kDLSSRayReconstruction)
+        return kUpscalerModeDLSSRayReconstruction;
+
+    // Warn once per distinct name.
+    static set<string> warnedNames;
+    if (warnedNames.insert(name).second)
+    {
+        AU_WARN("Unknown upscaler mode \"%s\"; rendering without an upscaler. Expected one of "
+                "\"%s\", \"%s\", \"%s\", \"%s\".",
+            name.c_str(), Names::UpscalerModes::kNone.c_str(),
+            Names::UpscalerModes::kDLSS.c_str(), Names::UpscalerModes::kFSR.c_str(),
+            Names::UpscalerModes::kDLSSRayReconstruction.c_str());
+    }
+
+    return kUpscalerModeNone;
+}
 
 // Create or get the property set (options) for the renderer.
 static PropertySetPtr gpPropertySet;
@@ -50,6 +75,19 @@ static PropertySetPtr propertySet()
     gpPropertySet->add(kLabelIsFlipImageYEnabled, true);
     gpPropertySet->add(kLabelIsReferenceBSDFEnabled, false);
     gpPropertySet->add(kLabelIsForceOpaqueShadowsEnabled, false);
+    gpPropertySet->add(kLabelUpscalerMode, Names::UpscalerModes::kNone);
+    gpPropertySet->add(kLabelIsTemporalResolveEnabled, true);
+    gpPropertySet->add(kLabelUpscalerQuality, 0); // Native / DLAA
+    gpPropertySet->add(kLabelIsRussianRouletteEnabled, true);
+    gpPropertySet->add(kLabelRussianRouletteStartDepth, 3);
+    // Default the MDL generator option to match the build-time toggle:
+    // when Aurora is compiled with ENABLE_MDL=1 the new MDL pipeline is
+    // the active default; when ENABLE_MDL=0 it is unconditionally off.
+#if ENABLE_MATERIALX && ENABLE_MDL
+    gpPropertySet->add(kLabelOptionUseMDLMaterialGenerator, true);
+#else
+    gpPropertySet->add(kLabelOptionUseMDLMaterialGenerator, false);
+#endif
 
     return gpPropertySet;
 }
@@ -60,7 +98,19 @@ RendererBase::RendererBase(uint32_t taskCount) : FixedValues(propertySet()), _ta
     _pAssetMgr = make_unique<AssetManager>();
     _pAssetMgr->enableVerticalFlipOnImageLoad(_values.asBoolean(kLabelIsFlipImageYEnabled));
 
+#if ENABLE_MATERIALX && ENABLE_MDL
+    // Initialize the MDL SDK.
+    _pMdlSdk = make_shared<MdlSdk>();
+#endif
+
     assert(taskCount > 0);
+}
+
+RendererBase::~RendererBase()
+{
+    // Explicitly release the scene before the MDL SDK so that all
+    // handles are released before shutting down the SDK.
+    _pScene.reset();
 }
 
 void RendererBase::setOptions(const Properties& options)
@@ -88,6 +138,22 @@ void RendererBase::setCamera(
     _cameraProj    = make_mat4(proj);
     _focalDistance = focalDistance;
     _lensRadius    = lensRadius;
+}
+
+void RendererBase::addMdlSearchPath(const std::string& path)
+{
+#if ENABLE_MATERIALX && ENABLE_MDL
+    _pMdlSdk->mdlConfig()->add_mdl_path(path.c_str());
+#else
+    (void)path;
+#endif
+}
+
+void RendererBase::setLoadResourceFunction(LoadResourceFunction func)
+{
+    // Implemented here rather than per backend, so no backend can forget it. The asset manager it
+    // forwards to is owned by RendererBase.
+    _pAssetMgr->setLoadResourceFunction(func);
 }
 
 // Note that this handles strings differently than the implementation in SceneBase.
@@ -137,6 +203,25 @@ void RendererBase::propertiesToValues(const Properties& properties, IValues& val
     }
 }
 
+float RendererBase::denoisingRange() const
+{
+    // Based on the scene's farthest view-space extent, with 10% headroom.
+    // Clamp the result to a useful range.
+    static constexpr float kRangeHeadroom = 1.1f;
+    static constexpr float kMinRange      = 1.0f;
+    static constexpr float kMaxRange      = 5.0e8f;
+
+    const Foundation::BoundingBox& bounds = _pScene->bounds();
+    if (!bounds.isValid())
+    {
+        return kMinRange;
+    }
+
+    Foundation::BoundingBox viewBox = bounds.transform(_cameraView);
+    float const maxViewDepth        = -viewBox.min().z;
+    return glm::clamp(maxViewDepth * kRangeHeadroom, kMinRange, kMaxRange);
+}
+
 bool RendererBase::updateFrameDataGPUStruct(FrameData* pStaging)
 {
     FrameData frameData;
@@ -149,17 +234,28 @@ bool RendererBase::updateFrameDataGPUStruct(FrameData* pStaging)
     // - Whether the camera uses an orthographic projection, defined by the [3,3] element of the
     //   projection matrix.
     // - Focal distance and lens radius, for depth of field.
-    frameData.cameraViewProj    = _cameraProj * _cameraView;
-    frameData.cameraInvView     = transpose(inverse(_cameraView));
-    frameData.viewSize          = vec2(2.0f / _cameraProj[0][0], 2.0f / _cameraProj[1][1]);
-    frameData.isOrthoProjection = _cameraProj[3][3] == 1.0f;
-    frameData.focalDistance     = _focalDistance;
-    frameData.lensRadius        = _lensRadius;
+    frameData.cameraViewProj     = _cameraProj * _cameraView;
+    frameData.cameraViewProjPrev = frameData.cameraViewProj;
+    frameData.cameraInvView      = transpose(inverse(_cameraView));
+    frameData.cameraInvViewPrev  = frameData.cameraInvView;
+    frameData.viewSize           = vec2(2.0f / _cameraProj[0][0], 2.0f / _cameraProj[1][1]);
+    frameData.cameraJitter       = vec2(0.0f);
+    frameData.cameraJitterPrev   = vec2(0.0f);
+    frameData.isOrthoProjection  = _cameraProj[3][3] == 1.0f;
+    frameData.focalDistance      = _focalDistance;
+    frameData.lensRadius         = _lensRadius;
+    // A backend that measures frame time will overwrite this.
+    frameData.timeDeltaMs             = kDefaultFrameTimeMs;
+    frameData.isTemporalJitterEnabled = 0;
 
     // Get the scene size, specifically the maximum distance between any two points in the scene.
     // This is computed as the distance between the min / max corners of the bounding box.
     const Foundation::BoundingBox& bounds = _pScene->bounds();
     frameData.sceneSize                   = glm::length(bounds.max() - bounds.min());
+
+    // Place sky / miss pixels beyond the denoising range so they classify as background.
+    // Use a negative value for Aurora's signed right-handed view Z; NRD takes the absolute value.
+    frameData.skyViewZ = -denoisingRange() * 2.0f;
 
     // Copy the current light buffer for the scene to this frame's light data.
     memcpy(&frameData.lights, &_pScene->lights(), sizeof(frameData.lights));
@@ -168,12 +264,21 @@ bool RendererBase::updateFrameDataGPUStruct(FrameData* pStaging)
     int traceDepth               = _values.asInt(kLabelTraceDepth);
     traceDepth                   = glm::max(1, glm::min(kMaxTraceDepth, traceDepth));
     frameData.traceDepth         = traceDepth;
-    frameData.isDenoisingEnabled = _values.asBoolean(kLabelIsDenoisingEnabled) ? 1 : 0;
+    frameData.isDenoisingEnabled = 0;
     frameData.isForceOpaqueShadowsEnabled =
         _values.asBoolean(kLabelIsForceOpaqueShadowsEnabled) ? 1 : 0;
     frameData.isDiffuseOnlyEnabled   = _values.asBoolean(kLabelIsDiffuseOnlyEnabled) ? 1 : 0;
     frameData.maxLuminance           = _values.asFloat(kLabelMaxLuminance);
     frameData.isDisplayErrorsEnabled = debugMode == kDebugModeErrors ? 1 : 0;
+    frameData.isRussianRouletteEnabled = _values.asBoolean(kLabelIsRussianRouletteEnabled) ? 1 : 0;
+    frameData.russianRouletteStartDepth =
+        glm::max(0, _values.asInt(kLabelRussianRouletteStartDepth));
+
+    // These biased variance-reduction settings are enabled only by denoising backends.
+    // Keep the default unbiased; backends that use a denoiser will override these values.
+    frameData.isPathRegularizationEnabled = 0;
+    frameData.pathRegularizationStrength  = 0.0f;
+    frameData.indirectBounceClampScale    = 0.0f;
 
     // If there are no changes compared local CPU copy, then do nothing and return false.
     if (memcmp(&_frameData, &frameData, sizeof(FrameData)) == 0)
@@ -204,11 +309,19 @@ bool RendererBase::updatePostProcessingGPUStruct(PostProcessing* pStaging)
     settings.brightness               = _values.asFloat3(kLabelBrightness);
     settings.debugMode                = glm::max(0, glm::min(debugMode, kMaxDebugMode));
     settings.range                    = sceneRange;
-    settings.isDenoisingEnabled       = _values.asBoolean(kLabelIsDenoisingEnabled) ? 1 : 0;
+    settings.isDenoisingEnabled       = 0;
     settings.isToneMappingEnabled     = _values.asBoolean(kLabelIsToneMappingEnabled);
     settings.isGammaCorrectionEnabled = _values.asBoolean(kLabelIsGammaCorrectionEnabled);
     settings.isAlphaEnabled           = _values.asBoolean(kLabelIsAlphaEnabled);
-    
+    settings.upscalerMode             = upscalerModeFromName(_values.asString(kLabelUpscalerMode));
+
+    // Set by the backend that owns temporal and upscaling passes.
+    // Zero means no temporal history, render/display split, or depth copy.
+    settings.temporalResolveSource = 0;
+    settings.renderWidth           = 0;
+    settings.renderHeight          = 0;
+    settings.writeDisplayDepth     = 0;
+
     // If there are no changes compared local CPU copy, then do nothing and return false.
     if (memcmp(&_postProcessingData, &settings, sizeof(PostProcessing)) == 0)
         return false; // No changes.

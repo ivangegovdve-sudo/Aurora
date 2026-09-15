@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -116,6 +116,8 @@ private:
 #else
     void requestUpdate(bool shouldRestart = true);
 #endif
+    void setTransientStatus(const string& msg);
+    string temporalStateLabel() const;
     void toggleAnimation();
     void toggleFullScreen();
     void toggleVSync();
@@ -128,6 +130,11 @@ private:
     bool loadEnvironmentImageFile(const string& filePath);
     bool loadSceneFile(const string& filePath);
     void saveImage(const wstring& filePath, const uvec2& dimensions);
+    void setOutputTargets(const Aurora::IRenderBufferPtr& pRenderBuffer, const uvec2& dimensions,
+        bool includeAuxiliaryAOVs);
+    void renderOutputFrames(const Aurora::IRenderBufferPtr& pRenderBuffer, const uvec2& dimensions);
+    void runUpdateBenchmark();
+    void dumpViewportCameraParameters();
     bool applyMaterialXFile(const string& mtlxPath);
     Aurora::Path loadMaterialXFile(const string& filePath);
     void addAssetPath(const string& path);
@@ -137,6 +144,10 @@ private:
     bool addDecal(const string& decalMtlXPath);
 
 #if defined(INTERACTIVE_PLASMA)
+public:
+    void onSizeChanged(uint32_t width, uint32_t height);
+
+private:
     /*** Private Event Handlers ***/
 
     void switchToCamera(unsigned int newCamera);
@@ -146,7 +157,6 @@ private:
     void onKeyPressed(WPARAM keyCode);
     void onMouseMoved(int xPos, int yPos, WPARAM buttons);
     void onMouseWheel(int delta, WPARAM buttons);
-    void onSizeChanged(UINT width, UINT height);
 #else
 public:
     void onFilesDropped(NSURL* url);
@@ -189,6 +199,9 @@ private:
 #endif
     vec3 _lightDirection     = normalize(vec3(1.0f, -0.5f, 0.0f));
     bool _isDenoisingEnabled = false;
+    int _upscalerMode        = 0; // 0=off, 1=DLSS4, 2=FSR, 3=DLSS Ray Reconstruction
+    bool _isTemporalResolveEnabled = true;
+    int _upscalerQuality = 0; // 0=Native/DLAA, 1=Quality (1.5x), 2=Balanced (1.7x), 3=Performance (2.0x)
 #if defined(INTERACTIVE_PLASMA)
     [[maybe_unused]] bool _isDiffuseOnlyEnabled        = false;
     [[maybe_unused]] bool _isForceOpaqueShadowsEnabled = false;
@@ -197,8 +210,8 @@ private:
 #endif
     bool _isGroundPlaneShadowEnabled     = false;
     bool _isGroundPlaneReflectionEnabled = false;
+    [[maybe_unused]] int _traceDepth     = 5;
 #if defined(INTERACTIVE_PLASMA)
-    [[maybe_unused]] int _traceDepth             = 5;
     float _exposure             = 0.0f;
     float _maxLuminanceExposure = 0.0f;
 #endif
@@ -215,6 +228,11 @@ private:
     float _lightIntensity     = 2.0f;
 
     Foundation::CPUTimer _animationTimer;
+
+    // Transient status shown in the title bar for ~3 seconds after any option change.
+    string _transientStatus;
+    Foundation::CPUTimer _transientStatusTimer;
+
     string _materialXFilePath;
     string _decalMaterialXFilePath;
     vector<Layers> _instanceLayers;

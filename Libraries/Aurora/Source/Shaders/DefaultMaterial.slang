@@ -63,11 +63,17 @@ float4 sampleOpacityTexture(int mtlOffset, float2 uv, float level)
 
 #else
 // Vulkan GLSL versions are forward declared and implemented in raw GLSL suffix file.
+__target_intrinsic(glsl, "getMaterial_0()")
 MaterialConstants getMaterial();
+__target_intrinsic(glsl, "sampleBaseColorTexture_0($0, $1, $2)")
 float4 sampleBaseColorTexture(int /*mtlOffset*/, float2 uv, float level);
+__target_intrinsic(glsl, "sampleSpecularRoughnessTexture_0($0, $1, $2)")
 float4 sampleSpecularRoughnessTexture(int /*mtlOffset*/, float2 uv, float level);
+__target_intrinsic(glsl, "sampleEmissionColorTexture_0($0, $1, $2)")
 float4 sampleEmissionColorTexture(int /*mtlOffset*/, float2 uv, float level);
+__target_intrinsic(glsl, "sampleOpacityTexture_0($0, $1, $2)")
 float4 sampleOpacityTexture(int /*mtlOffset*/, float2 uv, float level);
+__target_intrinsic(glsl, "sampleNormalTexture_0($0, $1, $2)")
 float4 sampleNormalTexture(int /*mtlOffset*/, float2 uv, float level);
 #endif
 
@@ -219,9 +225,9 @@ export Material evaluateDefaultMaterial(
             Material_normalTexRotation(gGlobalMaterialConstants, offset),
             Material_normalTexOffset(gGlobalMaterialConstants, offset));
         float3 normalTexel = sampleNormalTexture(headerOffset, uv, 0.0f).rgb;
-        float3 objectSpaceNormal = calculateNormalFromMap(
+        float3 worldSpaceNormal = calculateNormalFromMap(
             normalTexel, TANGENT_SPACE, 1.0, shading.normal, shading.tangent);
-        materialNormal = normalize(mul((float3x3) shading.objToWorld, objectSpaceNormal));
+        materialNormal = worldSpaceNormal; // No need to transform to world space, normal and tangent are already in world space
 
         isGeneratedNormal = true;
     }

@@ -1,15 +1,5 @@
-// Post processing data UBO.
-// NOTE should be passed as push constants, but this is currently broken in HGI.
-layout(binding = 3) layout(std140) uniform PostProcesssing
-{
-    vec3 brightness;
-    int debugMode;
-    vec2 range;
-    bool isDenoisingEnabled;
-    bool isToneMappingEnabled;
-    bool isGammaCorrectionEnabled;
-    bool isAlphaEnabled;
-} gSettings;
+// The post processing settings uniform block is declared through the Hgi shader function API
+// (see HGIRenderer::createResources).
 
 // Get texture UV from input coordinate.
 vec2 GetTexCoords(ivec2 outCoords)

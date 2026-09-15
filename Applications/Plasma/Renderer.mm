@@ -120,7 +120,7 @@ static const NSUInteger kMaxBuffersInFlight = 3;
 
 - (void)mtkView:(nonnull MTKView *)view drawableSizeWillChange:(CGSize)size
 {
-    // TODO: Respond to drawable size or orientation changes here
+    gpApp->onSizeChanged(static_cast<uint32_t>(size.width), static_cast<uint32_t>(size.height));
 }
 
 @end

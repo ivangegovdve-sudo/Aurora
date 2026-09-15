@@ -15,13 +15,94 @@
 
 #include "HGIWindow.h"
 
+#include "HGIRenderer.h"
+#if !defined(__APPLE__)
+#include "HGIVulkanSwapchain.h"
+#endif
+
 BEGIN_AURORA
 
 HGIWindow::HGIWindow(
-    HGIRenderer* /*pRenderer*/, WindowHandle /*window*/, uint32_t /*width*/, uint32_t /*height*/)
+    HGIRenderer* pRenderer, WindowHandle window, uint32_t width, uint32_t height) :
+    _width(width), _height(height)
 {
+    AU_ASSERT(pRenderer, "HGIWindow requires a renderer.");
+
+#if defined(__APPLE__)
+    (void)window;
+#endif
+
+    // Offscreen buffer for presentation. Use float format to match renderer output.
+    _pRenderBuffer =
+        std::make_shared<HGIRenderBuffer>(pRenderer, width, height, ImageFormat::Float_RGBA);
+
+#if !defined(__APPLE__)
+    // Vulkan can present to the window. Falls back to render buffer if unavailable.
+    _pSwapchain = std::make_unique<HGIVulkanSwapchain>(
+        pRenderer->hgi().get(), window, width, height, _vsyncEnabled);
+    if (!_pSwapchain->isValid())
+    {
+        AU_WARN("HGIWindow: Vulkan presentation unavailable; the client must present the render "
+                "buffer itself.");
+        _pSwapchain.reset();
+    }
+#endif
 }
 
-void HGIWindow::resize(uint32_t /*width*/, uint32_t /*height*/) {}
+HGIWindow::~HGIWindow() = default;
+
+bool HGIWindow::isPresentable() const
+{
+#if !defined(__APPLE__)
+    return _pSwapchain && _pSwapchain->isValid();
+#else
+    return false;
+#endif
+}
+
+bool HGIWindow::present()
+{
+#if !defined(__APPLE__)
+    if (!_pSwapchain || !_pRenderBuffer)
+    {
+        return false;
+    }
+    return _pSwapchain->present(_pRenderBuffer->storageTex());
+#else
+    return false;
+#endif
+}
+
+void HGIWindow::resize(uint32_t width, uint32_t height)
+{
+    if (width == _width && height == _height)
+    {
+        return;
+    }
+    _width  = width;
+    _height = height;
+
+    if (_pRenderBuffer)
+    {
+        _pRenderBuffer->resize(width, height);
+    }
+#if !defined(__APPLE__)
+    if (_pSwapchain)
+    {
+        _pSwapchain->resize(width, height);
+    }
+#endif
+}
+
+void HGIWindow::setVSyncEnabled(bool enabled)
+{
+    _vsyncEnabled = enabled;
+#if !defined(__APPLE__)
+    if (_pSwapchain)
+    {
+        _pSwapchain->setVSyncEnabled(enabled);
+    }
+#endif
+}
 
 END_AURORA

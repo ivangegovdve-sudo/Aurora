@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,19 +38,33 @@ struct LightData
     packed_int3 pad;
 };
 
+// NOTE: this struct is a byte-for-byte mirror of RendererBase::FrameData and Shaders/Frame.slang.
+// Fields must stay in the same order, with "lights" on a 16-byte boundary.
 struct FrameData
 {
     // The view-projection matrix.
     float4x4 cameraViewProj;
+
+    // The previous frame's view-projection matrix.
+    float4x4 cameraViewProjPrev;
 
     // The inverse view matrix, also transposed. The *rows* must have the desired vectors:
     // right, up, front, and eye position. HLSL array access with [] returns rows, not columns,
     // hence the need for the matrix to be supplied transposed.
     float4x4 cameraInvView;
 
+    // The previous frame's inverse view matrix, also transposed.
+    float4x4 cameraInvViewPrev;
+
     // The dimensions of the view (in world units) at a distance of 1.0 from the camera, which
     // is useful to build ray directions.
     packed_float2 viewSize;
+
+    // Deterministic per-frame camera jitter, in pixel units.
+    packed_float2 cameraJitter;
+
+    // Previous frame's deterministic camera jitter, in pixel units.
+    packed_float2 cameraJitterPrev;
 
     // Whether the camera is using an orthographic projection. Otherwise a perspective
     // projection is assumed.
@@ -62,6 +76,12 @@ struct FrameData
     // The diameter of the lens for depth of field. If this is zero, there is no depth of field,
     // i.e. pinhole camera.
     float lensRadius;
+
+    // Time delta between frames in milliseconds.
+    float timeDeltaMs;
+
+    // Whether deterministic temporal jitter should be used instead of random AA jitter.
+    int isTemporalJitterEnabled;
 
     // The size of the scene, specifically the maximum distance between any two points in the
     // scene.
@@ -91,6 +111,25 @@ struct FrameData
 
     // The maximum luminance for path tracing samples, for simple firefly clamping.
     float maxLuminance;
+
+    // Whether Russian Roulette path termination is enabled.
+    int isRussianRouletteEnabled;
+
+    // The bounce depth (0-based) at which Russian Roulette termination begins being applied.
+    int russianRouletteStartDepth;
+
+    // Whether path space roughness regularization is enabled for indirect rays.
+    int isPathRegularizationEnabled;
+
+    // The strength (0-1) of the path regularization roughness floor at deep bounces.
+    float pathRegularizationStrength;
+
+    // Scale (relative to maxLuminance) used to soft-clamp each indirect bounce's radiance.
+    float indirectBounceClampScale;
+
+    // The view-space Z value written for sky / miss pixels. Denoising is DirectX-only, so this is
+    // unused here, but it must be present to keep the layout aligned.
+    float skyViewZ;
 
     // Pad to 16 byte boundary.
     packed_float2 _padding1;

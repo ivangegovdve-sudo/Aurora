@@ -31,7 +31,7 @@ foreach(_comp ${TBB_COMPOMPONENTS})
     INTERFACE_INCLUDE_DIRECTORIES "${TBB_INCLUDE_DIR}"
   )
 
-  find_library(TBB_${_comp}_LIBRARY_RELEASE ${_comp})
+  find_library(TBB_${_comp}_LIBRARY_RELEASE NAMES ${_comp}12 ${_comp})
   if(TBB_${_comp}_LIBRARY_RELEASE)
     list(APPEND TBB_LIBRARIES_RELEASE "${TBB_${_comp}_LIBRARY_RELEASE}")
     set_property(TARGET TBB::${_comp} APPEND PROPERTY
@@ -41,7 +41,9 @@ foreach(_comp ${TBB_COMPOMPONENTS})
       set_target_properties(TBB::${_comp} PROPERTIES
         IMPORTED_IMPLIB_RELEASE "${TBB_${_comp}_LIBRARY_RELEASE}"
       )
-      find_file(TBB_${_comp}_DLL_RELEASE ${_comp}.dll REQUIRED
+      find_file(TBB_${_comp}_DLL_RELEASE
+        NAMES ${_comp}12.dll ${_comp}.dll
+        REQUIRED
         PATHS "${TBB_INSTALL_PREFIX}/bin" "${TBB_INSTALL_PREFIX}/lib"
       )
       set_target_properties(TBB::${_comp} PROPERTIES
@@ -64,7 +66,7 @@ foreach(_comp ${TBB_COMPOMPONENTS})
     endif()
   endif()
 
-  find_library(TBB_${_comp}_LIBRARY_DEBUG ${_comp}_debug)
+  find_library(TBB_${_comp}_LIBRARY_DEBUG NAMES ${_comp}12_debug ${_comp}_debug)
   if(TBB_${_comp}_LIBRARY_DEBUG)
     list(APPEND TBB_LIBRARIES_DEBUG "${TBB_${_comp}_LIBRARY_DEBUG}")
     set_property(TARGET TBB::${_comp} APPEND PROPERTY
@@ -74,7 +76,9 @@ foreach(_comp ${TBB_COMPOMPONENTS})
       set_target_properties(TBB::${_comp} PROPERTIES
         IMPORTED_IMPLIB_DEBUG "${TBB_${_comp}_LIBRARY_DEBUG}"
       )
-      find_file(TBB_${_comp}_DLL_DEBUG ${_comp}_debug.dll REQUIRED
+      find_file(TBB_${_comp}_DLL_DEBUG
+        NAMES ${_comp}12_debug.dll ${_comp}_debug.dll
+        REQUIRED
         PATHS "${TBB_INSTALL_PREFIX}/bin" "${TBB_INSTALL_PREFIX}/lib"
       )
       set_target_properties(TBB::${_comp} PROPERTIES

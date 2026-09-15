@@ -82,7 +82,7 @@ cmake_path(GET PXR_INCLUDE_DIRS PARENT_PATH PXR_INSTALL_PREFIX)
 set(PXR_LIBRARY_DIRS "${PXR_INSTALL_PREFIX}/lib")
 
 # Configure all USD targets
-set(USD_COMPOMPONENTS arch tf gf js trace work plug vt ar kind sdf ndr sdr pcp usd usdGeom usdVol usdMedia usdShade usdLux usdProc usdRender usdHydra usdRi usdSkel usdUI usdUtils usdPhysics garch hf hio cameraUtil pxOsd glf hgi hgiGL hgiInterop hd hdGp hdsi hdSt hdx usdImaging usdImagingGL usdProcImaging usdRiImaging usdSkelImaging usdVolImaging usdAppUtils)
+set(USD_COMPOMPONENTS arch tf gf js trace work plug vt ar kind sdf sdr pcp usd usdGeom usdVol usdMedia usdShade usdLux usdProc usdRender usdHydra usdRi usdSkel usdUI usdUtils usdPhysics garch hf hio cameraUtil pxOsd glf hgi hgiGL hgiInterop hd hdGp hdsi hdSt hdx usdImaging usdImagingGL usdProcImaging usdRiImaging usdSkelImaging usdVolImaging usdAppUtils)
 
 if(Vulkan_shaderc_combined_FOUND)
   list(APPEND USD_COMPOMPONENTS "hgiVulkan")
@@ -114,9 +114,10 @@ foreach(_comp ${USD_COMPOMPONENTS})
       )
       cmake_path(GET USD_${_comp}_LIBRARY_RELEASE PARENT_PATH USD_${_comp}_LIBRARY_DIR_RELEASE)
       find_file(USD_${_comp}_DLL_RELEASE usd_${_comp}.dll REQUIRED
-        PATHS "${USD_${_comp}_LIBRARY_DIR_RELEASE}"
+        PATHS "${USD_${_comp}_LIBRARY_DIR_RELEASE}" "${USD_${_comp}_LIBRARY_DIR_RELEASE}/../bin"
+              "${PXR_INSTALL_PREFIX}/bin"
       )
-      set_target_properties(arch PROPERTIES
+      set_target_properties(${_comp} PROPERTIES
         IMPORTED_LOCATION_RELEASE "${USD_${_comp}_DLL_RELEASE}"
       )
       unset(USD_${_comp}_LIBRARY_DIR_RELEASE)
@@ -150,9 +151,10 @@ foreach(_comp ${USD_COMPOMPONENTS})
       )
       cmake_path(GET USD_${_comp}_LIBRARY_DEBUG PARENT_PATH USD_${_comp}_LIBRARY_DIR_DEBUG)
       find_file(USD_${_comp}_DLL_DEBUG usd_${_comp}d.dll REQUIRED
-        PATHS "${USD_${_comp}_LIBRARY_DIR_DEBUG}"
+        PATHS "${USD_${_comp}_LIBRARY_DIR_DEBUG}" "${USD_${_comp}_LIBRARY_DIR_DEBUG}/../bin"
+              "${PXR_INSTALL_PREFIX}/bin"
       )
-      set_target_properties(arch PROPERTIES
+      set_target_properties(${_comp} PROPERTIES
         IMPORTED_LOCATION_DEBUG "${USD_${_comp}_DLL_DEBUG}"
       )
       unset(USD_${_comp}_LIBRARY_DIR_DEBUG)
@@ -250,14 +252,9 @@ set_target_properties(sdf PROPERTIES
   INTERFACE_LINK_LIBRARIES "arch;tf;gf;trace;vt;work;ar;$<$<TARGET_EXISTS:Boost::python>:Boost::python>"
   INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${Boost_INCLUDE_DIRS}"
 )
-set_target_properties(ndr PROPERTIES
-  INTERFACE_INCLUDE_DIRECTORIES "${PXR_INCLUDE_DIRS};${Boost_INCLUDE_DIRS}"
-  INTERFACE_LINK_LIBRARIES "tf;plug;vt;work;ar;sdf;$<$<TARGET_EXISTS:Boost::python>:Boost::python>"
-  INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${Boost_INCLUDE_DIRS}"
-)
 set_target_properties(sdr PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${PXR_INCLUDE_DIRS};${Boost_INCLUDE_DIRS}"
-  INTERFACE_LINK_LIBRARIES "tf;vt;ar;ndr;sdf;$<$<TARGET_EXISTS:Boost::python>:Boost::python>"
+  INTERFACE_LINK_LIBRARIES "tf;vt;ar;sdf;$<$<TARGET_EXISTS:Boost::python>:Boost::python>"
   INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${Boost_INCLUDE_DIRS}"
 )
 set_target_properties(pcp PROPERTIES
@@ -285,11 +282,11 @@ set_target_properties(usdMedia PROPERTIES
 )
 set_target_properties(usdShade PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${PXR_INCLUDE_DIRS}"
-  INTERFACE_LINK_LIBRARIES "tf;vt;js;sdf;ndr;sdr;usd;usdGeom"
+  INTERFACE_LINK_LIBRARIES "tf;vt;js;sdf;sdr;usd;usdGeom"
 )
 set_target_properties(usdLux PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${PXR_INCLUDE_DIRS}"
-  INTERFACE_LINK_LIBRARIES "tf;vt;ndr;sdf;usd;usdGeom;usdShade"
+  INTERFACE_LINK_LIBRARIES "tf;vt;sdf;usd;usdGeom;usdShade"
 )
 set_target_properties(usdProc PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES "${PXR_INCLUDE_DIRS}"

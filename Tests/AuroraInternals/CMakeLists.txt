@@ -6,6 +6,14 @@ add_compile_definitions(ENABLE_MATERIALX=1)
 find_package(MaterialX REQUIRED) # MaterialX SDK
 # Alias the namespace to meet the cmake convention on imported targets
 add_library(MaterialX::GenGlsl ALIAS MaterialXGenGlsl)
+add_library(MaterialX::GenSlang ALIAS MaterialXGenSlang)
+
+# MDL SDK is only required when ENABLE_EXPERIMENTAL_MDL is on.
+if(ENABLE_EXPERIMENTAL_MDL)
+    add_compile_definitions(ENABLE_MDL=1)
+    add_library(MaterialX::GenMdl ALIAS MaterialXGenMdl)
+    find_package(mdl CONFIG REQUIRED) # NVIDIA MDL SDK
+endif()
 
 # List of common helper files shared by all tests. TEST_HELPERS_FOLDER variable is set in parent cmake file.
 set(HELPER_FILES
@@ -57,6 +65,16 @@ set(AURORA_FILES
     "${AURORA_DIR}/Source/MaterialX/BSDFCodeGenerator.cpp"
 )
 
+if(ENABLE_EXPERIMENTAL_MDL)
+    list(APPEND AURORA_FILES
+        "${AURORA_DIR}/Source/MdlSdk.cpp"
+        "${AURORA_DIR}/Source/MdlSdk.h"
+        "${AURORA_DIR}/Source/MaterialX/MDLMaterialData.h"
+        "${AURORA_DIR}/Source/MaterialX/MDLMaterialGenerator.h"
+        "${AURORA_DIR}/Source/MaterialX/MDLMaterialGenerator.cpp"
+    )
+endif()
+
 
 # Add test executable with all source files.
 add_executable(${PROJECT_NAME}
@@ -94,7 +112,16 @@ PRIVATE
     stb::stb
     Foundation
     MaterialXGenGlsl
+    MaterialXGenSlang
 )
+
+if(ENABLE_EXPERIMENTAL_MDL)
+    target_link_libraries(${PROJECT_NAME}
+    PRIVATE
+        MaterialXGenMdl
+        $<COMPILE_ONLY:mdl::mdl_sdk> ${CMAKE_DL_LIBS}
+    )
+endif()
 
 # Add helpers include folder.
 target_include_directories(${PROJECT_NAME}

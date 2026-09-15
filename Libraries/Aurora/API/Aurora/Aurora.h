@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -418,10 +418,13 @@ enum class ImageFormat : uint8_t
     /// 8-bit per-channel, 4-channel normalized integer.
     Integer_RGBA,
 
-    /// 32-bit per-channel, 2-channel normalized integer.
+    /// 32-bit per-channel, 2-channel integer.
     Integer_RG,
 
-    /// 16-bit per-channel, 4-channel normalized short.
+    /// 32-bit per channel, 1-channel integer.
+    Integer_R,
+
+    /// 16-bit per-channel, 4-channel short.
     Short_RGBA,
 
     /// 16-bit per-channel, 4-channel half-float.
@@ -432,6 +435,9 @@ enum class ImageFormat : uint8_t
 
     /// 32-bit per-channel, 3-channel float.
     Float_RGB,
+
+    /// 32-bit per-channel, 2-channel float.
+    Float_RG,
 
     /// 32-bit per-channel, single channel float.
     Float_R
@@ -617,6 +623,9 @@ public:
 
         /// The height of image in pixels.
         uint32_t height = 0;
+
+        /// The depth of image in pixels.
+        uint32_t depth = 0;
 
         /// The name of the image.
         /// \note This is for client reference only, and does not need to be unique.
@@ -1070,6 +1079,21 @@ public:
         Default
     };
 
+    /// Whether an upscaling mode can be used, and if not, whether that is fixable.
+    struct UpscalerSupport
+    {
+        /// Whether the mode can be used on this device right now.
+        bool isSupported = false;
+
+        /// Set when the hardware supports the mode but the installed display driver is older
+        /// than the mode requires.
+        bool needsDriverUpdate = false;
+
+        /// The minimum display driver version, valid only when needsDriverUpdate is set.
+        uint32_t minDriverVersionMajor = 0;
+        uint32_t minDriverVersionMinor = 0;
+    };
+
     /// Create rendering window from provided OS windows handle.
     virtual IWindowPtr createWindow(WindowHandle handle, uint32_t width, uint32_t height) = 0;
 
@@ -1182,6 +1206,20 @@ public:
     /// \desc Set the callback function used to load resources, such as textures, from a URI.
     /// \param func Callback function to be used for all subsequent loading.
     virtual void setLoadResourceFunction(LoadResourceFunction func) = 0;
+
+    /// \desc Add an MDL search path that is used to resolve resource file paths when generating
+    /// MDL code from MaterialX.
+    /// \param path The search path to add.
+    virtual void addMdlSearchPath(const std::string& path) = 0;
+
+    /// \desc Check whether an upscaling mode is supported by the renderer's device.
+    /// The result may be cached after the first query. Unsupported modes fall back safely.
+    /// \param mode The mode to query. kNone is always supported; unknown modes are unsupported.
+    /// \return Whether the mode is supported and, if not, whether a driver update may help.
+    virtual UpscalerSupport upscalerSupport(const std::string& mode)
+    {
+        return { mode == Names::UpscalerModes::kNone, false, 0, 0 };
+    }
 
 protected:
     virtual ~IRenderer() = default; // hidden destructor

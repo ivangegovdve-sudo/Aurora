@@ -1,9 +1,9 @@
-struct Material_d183faa1b8cb18d7 {
-	vec3 base_color;
-	vec3 specular_color;
-	float specular_roughness;
-	float specular_IOR;
-	vec3 emission_color;
-	float coat;
-	float coat_roughness;
+struct Material_f9fe6c76b2284bbb {
+	float3 SS_ShaderRef1_base_color;
+	float3 SS_ShaderRef1_specular_color;
+	float SS_ShaderRef1_specular_roughness;
+	float SS_ShaderRef1_specular_IOR;
+	float3 SS_ShaderRef1_emission_color;
+	float SS_ShaderRef1_coat;
+	float SS_ShaderRef1_coat_roughness;
 };

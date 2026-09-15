@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ BEGIN_AURORA
 namespace MaterialXCodeGen
 {
 class MaterialGenerator;
+class MDLMaterialGenerator;
 } // namespace MaterialXCodeGen
 
 // -1 is used to indicate an invalid offset in offset buffers passed to GPU.
@@ -103,7 +104,8 @@ public:
     void updateResources();
 
     /*** Functions ***/
-    void computeMaterialTextureCount(int& textureCountOut, int& samplerCountOut);
+    void computeMaterialTextureCount(
+        int& textureCountOut, int& texture3DCountOut, int& samplerCountOut);
     int instanceCount() const { return static_cast<int>(_instances.active().count()); }
     PTEnvironmentPtr environment() const { return _pEnvironment; }
     PTGroundPlanePtr groundPlane() const { return _pGroundPlane; }
@@ -123,9 +125,14 @@ public:
     PTShaderLibrary& shaderLibrary() { return *_pShaderLibrary.get(); }
     IMaterialPtr createMaterialPointer(
         const string& materialType, const string& document, const string& name);
-    shared_ptr<MaterialShader> generateMaterialX(
-        const string& document, shared_ptr<MaterialDefinition>* pDefOut);
+    shared_ptr<MaterialShader> generateMaterialX(const string& document,
+        shared_ptr<MaterialDefinition>* pDefOut, const string& materialName = "",
+        const string& baseDirectory = "");
     void setUnit(const string& unit);
+
+    // computeMaterialTextureCount needs to be called before
+    int numActiveMaterialTextures() const { return int(_activeMaterialTextures.size()); }
+    int numActiveMaterialTextures3D() const {return int(_activeMaterialTextures3D.size()); }
 
 private:
     /*** Private Types ***/
@@ -136,6 +143,7 @@ private:
     {
         InstanceData(const PTInstance& instance) :
             pGeometry(nullptr),
+            pMaterial(nullptr),
             mtlBufferOffset((int)-1),
             layers({}),
             bufferOffset(-1),
@@ -170,6 +178,7 @@ private:
 
         // Convenience properties, do not effect hash.
         const PTInstance* pInstance;
+        PTMaterialPtr pMaterial;
         bool isOpaque;
         int bufferOffset;
     };
@@ -221,6 +230,7 @@ private:
     map<IImage*, int> _materialTextureIndexLookup;
     map<ISampler*, int> _materialSamplerIndexLookup;
     vector<PTImage*> _activeMaterialTextures;
+    vector<PTImage*> _activeMaterialTextures3D;
     vector<PTSampler*> _activeMaterialSamplers;
     PTGroundPlanePtr _pGroundPlane;
     PTEnvironmentPtr _pEnvironment;
@@ -251,7 +261,16 @@ private:
     // Code generator used to generate MaterialX files.
 #if ENABLE_MATERIALX
     unique_ptr<MaterialXCodeGen::MaterialGenerator> _pMaterialXGenerator;
+#if ENABLE_MDL
+    // Optional MDL-based code generator, instantiated when the runtime
+    // option kLabelOptionUseMDLMaterialGenerator is true at PTScene construction.
+    unique_ptr<MaterialXCodeGen::MDLMaterialGenerator> _pMdlMaterialGenerator;
 #endif
+#endif
+
+    // Returns true when the renderer is configured to use the MDL-based
+    // MaterialX generator. Always false on builds where ENABLE_MDL=0.
+    bool useMdlMaterialGenerator() const;
 };
 
 MAKE_AURORA_PTR(PTScene);

@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<materialx version="1.39" colorspace="lin_rec709">
+  <standard_surface name="stdsurf_inputs" type="surfaceshader" xpos="10.521739" ypos="-0.689655">
+    <input name="base" type="float" value="1" />
+    <input name="base_color" type="color3" nodename="constant_color3" />
+    <input name="specular_roughness" type="float" value="0.78" />
+    <input name="subsurface" type="float" value="0.4" />
+    <input name="subsurface_color" type="color3" value="1, 1, 1" />
+    <input name="coat" type="float" nodename="constant_float" />
+    <input name="coat_roughness" type="float" nodename="dot_float" />
+  </standard_surface>
+  <surfacematerial name="M_stdsurf_inputs" type="material" xpos="13.043478" ypos="0.000000">
+    <input name="surfaceshader" type="surfaceshader" nodename="stdsurf_inputs" />
+  </surfacematerial>
+  <constant name="constant_color3" type="color3" xpos="7.159420" ypos="-2.344828">
+    <input name="value" type="color3" value="0, 0.529611, 0.0268837" />
+  </constant>
+  <constant name="constant_float" type="float" xpos="7.166667" ypos="-0.965517">
+    <input name="value" type="float" value="0.9" />
+  </constant>
+  <dot name="dot_float" type="float" xpos="7.195652" ypos="1.129310">
+    <input name="in" type="float" value="0.05" />
+  </dot>
+</materialx>

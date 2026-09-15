@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,9 @@
 #define PATHTRACINGCOMMON_H
 
 // Define this symbol for NRD.
+#ifndef COMPILER_DXC
 #define COMPILER_DXC
+#endif
 
 #include "BSDFCommon.slang"
 #include "Colors.slang"
@@ -49,9 +51,7 @@ Environment prepareEnvironmentValues()
     values.sampler           = gDefaultSampler;
 #endif
     values.lightTexture      = gEnvironmentLightTexture;
-#if DIRECTX
-    values.aliasMap = gEnvironmentAliasMap;
-#endif
+    values.aliasMap          = gEnvironmentAliasMap;
     return values;
 }
 

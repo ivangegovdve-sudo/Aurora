@@ -13,24 +13,59 @@ find_path(NRD_INTEGRATION_INCLUDE_DIR # Set variable NRD_INTEGRATION_INCLUDE_DIR
           REQUIRED
           DOC "path to NVIDIA Real-time Denoisers SDK integration header files"
 )
+# NRD v4.15 moved NRD.hlsli and NRDConfig.hlsli from Shaders/Include/ up to the Shaders root,
+# so check both, newest layout first, rather than assuming either one.
 find_path(NRD_SHADERS_INCLUDE_DIR
           NRD.hlsli
-          PATH_SUFFIXES "Shaders/Include"
+          PATH_SUFFIXES "Shaders" "Shaders/Include"
           REQUIRED
           DOC "path to NVIDIA Real-time Denoisers SDK shader header files"
 )
 
 cmake_path(GET NRD_INCLUDE_DIR PARENT_PATH NRD_INSTALL_PREFIX)
-cmake_path(GET NRD_SHADERS_INCLUDE_DIR PARENT_PATH NRD_SHADERS_DIR)
+set(NRD_SHADERS_DIR ${NRD_INSTALL_PREFIX}/Shaders)
 set(NRD_SHADERS_SOURCE_DIR ${NRD_SHADERS_DIR}/Source)
-set(NRD_SHADERS_RESOURCES_DIR ${NRD_SHADERS_DIR}/Resources)
 set(NRD_INCLUDE_DIRS ${NRD_INCLUDE_DIR} ${NRD_INTEGRATION_INCLUDE_DIR})
 
 add_library(NRD::NRD SHARED IMPORTED)
 
+# Prioritize the NRD installed at ${NRD_ROOT}
+if (DEFINED NRD_ROOT)
+    if (WIN32)
+      find_library(NRD_LIBRARY_RELEASE       # Set variable NRD_LIBRARY_RELEASE
+                  NRD                       # Find library path with NRD.dll, or NRD.lib
+                  NO_DEFAULT_PATH
+                  PATHS "${NRD_ROOT}/bin"
+                  DOC "path to NRD release library files"
+      )
+      find_library(NRD_LIBRARY_DEBUG         # Set variable NRD_LIBRARY_DEBUG
+                  NRDd                      # Find library path with NRDd.dll, or NRDd.lib
+                  NO_DEFAULT_PATH
+                  PATHS "${NRD_ROOT}/bin"
+                  DOC "path to NRD debug library files"
+      )
+    else()
+      find_library(NRD_LIBRARY_RELEASE       # Set variable NRD_LIBRARY_RELEASE
+                  NRD                       # Find library path with libNRD.so
+                  NO_DEFAULT_PATH
+                  PATHS "${NRD_ROOT}/lib"
+                  DOC "path to NRD release library files"
+      )
+      find_library(NRD_LIBRARY_DEBUG         # Set variable NRD_LIBRARY_DEBUG
+                  NRDd                      # Find library path with libNRDd.so
+                  NO_DEFAULT_PATH
+                  PATHS "${NRD_ROOT}/lib"
+                  DOC "path to NRD debug library files"
+      )
+    endif()
+endif()
 find_library(NRD_LIBRARY_RELEASE # Set variable NRD_LIBRARY_RELEASE
              NRD                 # Find library path with libNRD.so, NRD.dll, or NRD.lib
 )
+find_library(NRD_LIBRARY_DEBUG # Set variable NRD_LIBRARY_DEBUG
+             NRDd              # Find library path with libNRDd.so, NRDd.dll, or NRDd.lib
+)
+
 if(NRD_LIBRARY_RELEASE)
   set_property(TARGET NRD::NRD APPEND PROPERTY
     IMPORTED_CONFIGURATIONS RELEASE
@@ -48,9 +83,6 @@ if(NRD_LIBRARY_RELEASE)
   endif()
 endif()
 
-find_library(NRD_LIBRARY_DEBUG # Set variable NRD_LIBRARY_DEBUG
-             NRDd              # Find library path with libNRDd.so, NRDd.dll, or NRDd.lib
-)
 if(NRD_LIBRARY_DEBUG)
   set_property(TARGET NRD::NRD APPEND PROPERTY
     IMPORTED_CONFIGURATIONS DEBUG
@@ -101,5 +133,4 @@ mark_as_advanced(
     NRD_SHADERS_DIR
     NRD_SHADERS_INCLUDE_DIR
     NRD_SHADERS_SOURCE_DIR
-    NRD_SHADERS_RESOURCES_DIR
 )

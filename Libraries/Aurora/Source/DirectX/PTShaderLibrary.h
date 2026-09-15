@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #pragma once
+
+#include <future>
 
 #include "MaterialBase.h"
 #include "MaterialShader.h"
@@ -104,11 +106,18 @@ public:
     {
         initialize();
     }
-    ~PTShaderLibrary() {}
+    ~PTShaderLibrary()
+    {
+        if (_transpilerWarmup.valid())
+        {
+            _transpilerWarmup.wait();
+        }
+    }
 
-    static const LPWSTR kInstanceHitGroupName;
-    static const LPWSTR kInstanceClosestHitEntryPointName;
-    static const LPWSTR kInstanceShadowAnyHitEntryPointName;
+    static const LPWSTR kInstanceHitGroupNamePrefix;
+    static const LPWSTR kInstanceClosestHitEntryPointNamePrefix;
+    static const LPWSTR kInstanceShadowAnyHitEntryPointNamePrefix;
+    static const LPWSTR kInstanceMissEntryPointName;
     static const LPWSTR kRayGenEntryPointName;
     static const LPWSTR kShadowMissEntryPointName;
 
@@ -153,19 +162,21 @@ public:
     ID3D12RootSignaturePtr globalRootSignature() const { return _pGlobalRootSignature; }
 
     /// Rebuild the shader library and its pipeline state. GPU must be idle before calling this.
-    void rebuild(int globalTextureCount, int globalSamplerCount);
-
-    // Get the DirectX shader reflection for library.
-    ID3D12LibraryReflection* reflection() const { return _pShaderLibraryReflection; }
+    void rebuild(int globalTextureCount, int globalTexture3DCount, int globalSamplerCount);
 
     // Set the named option to a given int value.
     // Will be added to shader library as a #define statement.
     bool setOption(const string& name, int value);
 
     // Get the DirectX shader ID for the provided shader.
-    DirectXShaderIdentifier getShaderID(LPWSTR name);
+    DirectXShaderIdentifier getShaderID(LPCWSTR name);
 
     bool rebuildRequired() { return _shaderLibrary.rebuildRequired(); }
+
+    wstring getMaterialHitGroupName(const string& materialId) const
+    {
+        return kInstanceHitGroupNamePrefix + Foundation::s2w(materialId);
+    }
 
 private:
     // Initialize the library.
@@ -195,7 +206,8 @@ private:
     ID3D12RootSignaturePtr createRootSignature(const D3D12_ROOT_SIGNATURE_DESC& desc);
 
     // Initialize the shared root signatures.
-    void initRootSignatures(int globalTextureCount, int globalSamplerCount);
+    void initRootSignatures(
+        int globalTextureCount, int globalTexture3DCount, int globalSamplerCount);
 
     // Remove the HLSL source for the associated index.  Called by friend class MaterialShader.
     void removeSource(int sourceIndex);
@@ -209,12 +221,10 @@ private:
     ID3D12Device5Ptr _pDXDevice;
 
     ID3D12RootSignaturePtr _pGlobalRootSignature;
-    ID3D12RootSignaturePtr _pRayGenRootSignature;
     ID3D12RootSignaturePtr _pInstanceHitRootSignature;
 
     ID3D12StateObjectPtr _pPipelineState;
 
-    ID3D12LibraryReflection* _pShaderLibraryReflection;
     ComPtr<IDxcLibrary> _pDXCLibrary;
     ComPtr<IDxcCompiler> _pDXCompiler;
     ComPtr<IDxcLinker> _pDXLinker;
@@ -227,6 +237,9 @@ private:
     string _optionsSource;
     PTShaderOptions _options;
     vector<shared_ptr<Transpiler>> _transpilerArray;
+
+    std::future<void> _transpilerWarmup;
+    static shared_ptr<Transpiler> createTranspiler();
 
     Foundation::CPUTimer _timer;
     int _globalTextureCount = 0;

@@ -59,18 +59,54 @@ if(ENABLE_MATERIALX)
     # Add the preprocessor definition for MaterialX flag.
     add_compile_definitions(ENABLE_MATERIALX=1)
 
-    find_package(MaterialX REQUIRED) # MaterialX SDK
-    # Alias the namespace to meet the cmake convention on imported targets
-    add_library(MaterialX::GenGlsl ALIAS MaterialXGenGlsl)
+    find_package(MaterialX 1.39.5 REQUIRED) # MaterialX SDK (1.39.5+ required for Slang)
+    # MaterialXGenSlang inherits from MaterialXGenGlsl and links it transitively, so
+    # GenGlsl does not need to be listed explicitly in MATERIALX_TARGETS.
+    if(NOT TARGET MaterialXGenSlang)
+        message(FATAL_ERROR "MaterialXGenSlang is required. Build MaterialX with -DMATERIALX_BUILD_GEN_SLANG=ON.")
+    endif()
+    add_library(MaterialX::GenSlang ALIAS MaterialXGenSlang)
 endif()
 
-# Optionally enable NVIDIA denoiser.
-option(ENABLE_DENOISER "Build with support for NVIDIA denoiser." OFF)
-if(ENABLE_DENOISER)
-    add_compile_definitions(ENABLE_DENOISER=1)
+# Optionally enable MDL-based MaterialX code generation (requires MaterialX).
+option(ENABLE_EXPERIMENTAL_MDL "Enable experimental NVIDIA MDL-based MaterialX code generation (requires MaterialX)." OFF)
+if(ENABLE_EXPERIMENTAL_MDL)
+    if(NOT ENABLE_MATERIALX)
+        message(FATAL_ERROR "ENABLE_EXPERIMENTAL_MDL=ON requires ENABLE_MATERIALX=ON.")
+    endif()
+    add_compile_definitions(ENABLE_MDL=1)
+    find_package(mdl CONFIG REQUIRED) # NVIDIA MDL SDK
+    add_library(MaterialX::GenMdl ALIAS MaterialXGenMdl)
+endif()
 
+# Optionally enable denoiser support.
+# TODO: Metal & Vulkan denoiser.
+option(ENABLE_DENOISER "Build with NVIDIA NRD denoising support (DirectX backend only)." ON)
+
+# NVIDIA NRD denoising. Implemented only in the DirectX backend for now.
+set(ENABLE_NRD OFF)
+if(ENABLE_DENOISER AND ENABLE_DIRECTX_BACKEND AND NOT APPLE)
+    set(ENABLE_NRD ON)
+endif()
+
+if(ENABLE_NRD)
+    message(STATUS "Build with support for NVIDIA denoiser.")
+    add_compile_definitions(ENABLE_DENOISER=1)
     find_package(NRD REQUIRED) # NVIDIA Real-Time Denoisers
     find_package(NRI REQUIRED) # NVIDIA Render Interface
+else()
+    # Keep these defined but empty so toolbox.cmake's -E env does not pass garbage.
+    set(NRD_SHADERS_INCLUDE_DIR "")
+    set(NRD_SHADERS_SOURCE_DIR "")
+endif()
+
+# Optionally enable DLSS4 / FSR upscaling.
+option(ENABLE_UPSCALER "Build with DLSS4/FSR upscaling support." OFF)
+if(ENABLE_UPSCALER AND ENABLE_DIRECTX_BACKEND AND NOT APPLE)
+    add_compile_definitions(ENABLE_UPSCALER=1)
+    message(STATUS "Build with support for DLSS4/FSR upscaling.")
+    find_package(DLSS REQUIRED) # NVIDIA DLSS SDK
+    find_package(FSR REQUIRED)  # AMD FidelityFX SDK
 endif()
 
 
@@ -79,6 +115,9 @@ set(API_HEADERS
     "API/Aurora/Aurora.h"
     "API/Aurora/AuroraNames.h"
 )
+
+# Optional internal header files
+set(OPTIONAL_HEADERS)
 
 # Shared source used by all backends.
 set(COMMON_SOURCE
@@ -118,6 +157,13 @@ set(COMMON_SOURCE
     "Source/WindowsHeaders.h"
 )
 
+if(ENABLE_EXPERIMENTAL_MDL)
+    list(APPEND COMMON_SOURCE
+        "Source/MdlSdk.h"
+        "Source/MdlSdk.cpp"
+    )
+endif()
+
 # Create the CompiledShaders directory in advance while cmake is generating the project files
 set(COMPILED_SHADERS_DIR "${PROJECT_BINARY_DIR}/CompiledShaders")
 file(MAKE_DIRECTORY "${COMPILED_SHADERS_DIR}")
@@ -134,10 +180,10 @@ set(COMMON_SHADERS
     "Source/Shaders/Frame.slang"
     "Source/Shaders/Geometry.slang"
     "Source/Shaders/Globals.slang"
-    "Source/Shaders/GLSLToHLSL.slang"
     "Source/Shaders/GroundPlane.slang"
     "Source/Shaders/InstancePipelineState.slang"
     "Source/Shaders/GlobalPipelineState.slang"
+    "Source/Shaders/HitShaderEntryPoints.slang"
     "Source/Shaders/MainEntryPoints.slang"
     "Source/Shaders/Material.slang"
     "Source/Shaders/GlobalBufferAccessors.slang"
@@ -152,6 +198,13 @@ set(COMMON_SHADERS
     "Source/Shaders/Sampling.slang"
 )
 
+if(ENABLE_EXPERIMENTAL_MDL)
+    list(APPEND COMMON_SHADERS
+        "Source/Shaders/MDLTargetCodeTypes.slang"
+        "Source/Shaders/MDLRendererRuntime.slang"
+    )
+endif()
+
 #  On windows, the version resource and header files that add the version information to the DLL.
 if(WIN32)
 set(VERSION_FILES
@@ -165,20 +218,70 @@ set(MINIFIED_COMMON_SHADERS_HEADER "${COMPILED_SHADERS_DIR}/CommonShaders.h")
 # Add commands to minifiy common shaders, and compile the default main entry points.
 minify_shaders("${MINIFIED_COMMON_SHADERS_HEADER}" "${PROJECT_SOURCE_DIR}/Source/Shaders" "${COMMON_SHADERS}" ${Slang_COMPILER})
 
+# NRD.slang includes the NRD SDK's NRD.hlsli, which the Slang transpiler has to resolve at runtime
+# while compiling materials. Unlike Aurora's own shaders it cannot be minified into
+# CommonShaders.h, so embed it verbatim instead.
+set(EMBEDDED_NRD_SHADERS_HEADER)
+if(ENABLE_NRD)
+    set(EMBEDDED_NRD_SHADERS_HEADER "${COMPILED_SHADERS_DIR}/NRDShaders.h")
+    set(NRD_EMBEDDED_SHADER_FILES
+        "${NRD_SHADERS_INCLUDE_DIR}/NRD.hlsli"
+        "${NRD_SHADERS_INCLUDE_DIR}/NRDConfig.hlsli"
+    )
+    embed_shader_files("${EMBEDDED_NRD_SHADERS_HEADER}" "NRDShaders" "${NRD_EMBEDDED_SHADER_FILES}")
+endif()
+
 if(ENABLE_DIRECTX_BACKEND)
     if(ENABLE_MATERIALX)
         set(DIRECTX_MATERIALX_SOURCE
             "Source/MaterialX/BSDFCodeGenerator.cpp"
             "Source/MaterialX/BSDFCodeGenerator.h"
-            "Source/MaterialX/MaterialGenerator.cpp"
             "Source/MaterialX/MaterialGenerator.h"
+            "Source/MaterialX/MaterialGenerator.cpp"
+        )
+        if(ENABLE_EXPERIMENTAL_MDL)
+            list(APPEND DIRECTX_MATERIALX_SOURCE
+                "Source/MaterialX/MDLMaterialData.h"
+                "Source/MaterialX/MDLMaterialGenerator.h"
+                "Source/MaterialX/MDLMaterialGenerator.cpp"
+            )
+        endif()
+    endif()
+
+    if(ENABLE_NRD)
+        set(DIRECTX_DENOISER_SOURCE
+            "Source/MaterialX/MaterialGenerator.h"
+            "Source/DirectX/Denoiser.cpp"
+            "Source/DirectX/Denoiser.h"
+        )
+        list(APPEND COMMON_SHADERS
+            "Source/Shaders/NRD.slang"
+        )
+        list(APPEND OPTIONAL_HEADERS
+            ${NRI_INCLUDE_DIRS}
+            ${NRD_INCLUDE_DIRS}
         )
     endif()
 
-    if(ENABLE_DENOISER)
-        set(DIRECTX_DENOISER_SOURCE
-            "Source/DirectX/Denoiser.cpp"
-            "Source/DirectX/Denoiser.h"
+    if(ENABLE_UPSCALER)
+        # Use the FSR loader when available; otherwise fall back to stubs.
+        if(FSR_HAS_SIGNED_BINARY)
+            message(STATUS "FSR: signed binary loader found -- using real FidelityFX SDK.")
+            set(DIRECTX_UPSCALER_SOURCE
+                "Source/DirectX/Upscaler.cpp"
+                "Source/DirectX/Upscaler.h"
+            )
+        else()
+            message(STATUS "FSR: signed binary loader NOT found -- using stubs (FSR will fail at runtime).")
+            set(DIRECTX_UPSCALER_SOURCE
+                "Source/DirectX/Upscaler.cpp"
+                "Source/DirectX/Upscaler.h"
+                "Source/DirectX/FSRStubs.cpp"
+            )
+        endif()
+        list(APPEND OPTIONAL_HEADERS
+            ${DLSS_INCLUDE_DIR}
+            ${FSR_INCLUDE_DIRS}
         )
     endif()
 
@@ -211,12 +314,14 @@ if(ENABLE_DIRECTX_BACKEND)
         "Source/DirectX/PTTarget.cpp"
         "Source/DirectX/PTTarget.h"
         "${DIRECTX_DENOISER_SOURCE}"
+        "${DIRECTX_UPSCALER_SOURCE}"
         "${DIRECTX_MATERIALX_SOURCE}"
     )
 
     set(DIRECTX_PRECOMPILED_SHADERS
         "Source/DirectX/Shaders/Accumulation.hlsl"
         "Source/DirectX/Shaders/PostProcessing.hlsl"
+        "Source/DirectX/Shaders/TemporalResolve.hlsl"
     )
 endif()
 
@@ -247,6 +352,14 @@ if(ENABLE_HGI_BACKEND)
         "Source/HGI/HGIWindow.cpp"
         "Source/HGI/HGIWindow.h"
     )
+
+    if(NOT APPLE)
+        # Vulkan swapchain presentation. macOS presents the Metal texture directly instead.
+        list(APPEND HGI_SOURCE
+            "Source/HGI/HGIVulkanSwapchain.cpp"
+            "Source/HGI/HGIVulkanSwapchain.h"
+        )
+    endif()
 
     set(HGI_SHADERS
         "Source/HGI/Shaders/Accumulation.glsl"
@@ -307,6 +420,7 @@ add_library(${PROJECT_NAME} SHARED
     ${DIRECTX_SOURCE}
     ${COMMON_SHADERS}
     ${MINIFIED_COMMON_SHADERS_HEADER}
+    ${EMBEDDED_NRD_SHADERS_HEADER}
     ${DIRECTX_PRECOMPILED_SHADERS}
     ${HGI_SOURCE}
     ${HGI_SHADERS}
@@ -328,7 +442,7 @@ source_group("API" FILES ${API_HEADERS})
 source_group("Common" FILES ${COMMON_SOURCE})
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Source" FILES ${DIRECTX_SOURCE})
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Source" FILES ${HGI_SOURCE})
-source_group("Shaders" FILES ${COMMON_SHADERS})
+source_group("Shaders" FILES ${COMMON_SHADERS} ${EMBEDDED_NRD_SHADERS_HEADER})
 source_group("DirectX/Shaders" FILES ${DIRECTX_PRECOMPILED_SHADERS})
 source_group("HGI/Shaders" FILES ${HGI_SHADERS})
 if(APPLE)
@@ -336,8 +450,6 @@ if(APPLE)
 endif()
 
 if(WIN32)
-
-
     if(ENABLE_DIRECTX_BACKEND)
         # Create custom targets that will copy DLLs of the DirectX shader compiler to the runtime folder.
         add_custom_target(CopyDXCompilerDLLs ALL
@@ -380,9 +492,8 @@ if(WIN32)
         add_dependencies(${PROJECT_NAME} CopyExternalDLLs)
     endif()
 
-    # Create a custom target that will copy NVIDIA NRD and NRI DLLs to the runtime folder, if the
-    # denoiser is enabled.
-    if(ENABLE_DENOISER)
+    # Copy NVIDIA NRD and NRI DLLs to the runtime folder.
+    if(ENABLE_NRD)
         add_custom_target(CopyNvidiaDenoiserDLLs ALL
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${NRD_LIBRARY_DLLS} ${RUNTIME_OUTPUT_DIR}
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${NRI_LIBRARY_DLLS} ${RUNTIME_OUTPUT_DIR}
@@ -390,6 +501,26 @@ if(WIN32)
         set_property(TARGET CopyNvidiaDenoiserDLLs PROPERTY FOLDER "Deployment")
         add_dependencies(CopyNvidiaDenoiserDLLs MakeRuntimeDir)
         add_dependencies(${PROJECT_NAME} CopyNvidiaDenoiserDLLs)
+    endif()
+
+    # Copy DLSS runtime DLLs to the runtime folder.
+    if(ENABLE_UPSCALER AND DLSS_RUNTIME_DLLS)
+        add_custom_target(CopyDLSSDLLs ALL
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DLSS_RUNTIME_DLLS} ${RUNTIME_OUTPUT_DIR}
+        )
+        set_property(TARGET CopyDLSSDLLs PROPERTY FOLDER "Deployment")
+        add_dependencies(CopyDLSSDLLs MakeRuntimeDir)
+        add_dependencies(${PROJECT_NAME} CopyDLSSDLLs)
+    endif()
+
+    # Copy FSR signed binary DLLs to the runtime folder when available.
+    if(ENABLE_UPSCALER AND FSR_HAS_SIGNED_BINARY AND FSR_DLLS)
+        add_custom_target(CopyFSRDLLs ALL
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${FSR_DLLS} ${RUNTIME_OUTPUT_DIR}
+        )
+        set_property(TARGET CopyFSRDLLs PROPERTY FOLDER "Deployment")
+        add_dependencies(CopyFSRDLLs MakeRuntimeDir)
+        add_dependencies(${PROJECT_NAME} CopyFSRDLLs)
     endif()
 
     # Create a custom target that will copy MaterialX libraries to the runtime folder, if MaterialX
@@ -425,7 +556,17 @@ if(WIN32)
     add_dependencies(${PROJECT_NAME} CopySlangDLLs)
 
 else() # Linux
-    #TODO anything we need to set to support the Aurora execution?
+    # Shared libraries use RPATH, so no copying needed. MaterialX stdlib is data that must be
+    # copied to <runtime dir>/MaterialX/libraries for Foundation::getModulePath().
+    if(ENABLE_MATERIALX)
+        add_custom_target(CopyMaterialXLibrary ALL
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${RUNTIME_OUTPUT_DIR}/MaterialX/libraries
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${MATERIALX_STDLIB_DIR} ${RUNTIME_OUTPUT_DIR}/MaterialX/libraries
+        )
+        set_property(TARGET CopyMaterialXLibrary PROPERTY FOLDER "Deployment")
+        add_dependencies(CopyMaterialXLibrary MakeRuntimeDir)
+        add_dependencies(${PROJECT_NAME} CopyMaterialXLibrary)
+    endif()
 endif()
 
 # Set custom output properties.
@@ -443,19 +584,34 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 if(ENABLE_MATERIALX)
-    set(MATERIALX_TARGETS MaterialX::GenGlsl)
+    if(ENABLE_EXPERIMENTAL_MDL)
+        set(MATERIALX_TARGETS MaterialX::GenSlang MaterialX::GenMdl $<COMPILE_ONLY:mdl::mdl_sdk> ${CMAKE_DL_LIBS})
+    else()
+        set(MATERIALX_TARGETS MaterialX::GenSlang)
+    endif()
 else()
     set(MATERIALX_TARGETS "")
 endif()
 
-if(ENABLE_DENOISER)
+if(ENABLE_NRD)
     set(DENOISER_TARGETS NRD::NRD NRI::NRI)
 else()
     set(DENOISER_TARGETS "")
 endif()
 
+if(ENABLE_UPSCALER AND ENABLE_DIRECTX_BACKEND AND NOT APPLE)
+    set(UPSCALER_TARGETS DLSS::DLSS FSR::FSR)
+else()
+    set(UPSCALER_TARGETS "")
+endif()
+
 if(ENABLE_HGI_BACKEND)
-    set(USD_TARGETS usd hgi)
+    if(APPLE)
+        set(USD_TARGETS usd hgi)
+    else()
+        # HGIVulkanSwapchain calls into HgiVulkan directly for presentation.
+        set(USD_TARGETS usd hgi hgiVulkan)
+    endif()
 endif()
 
 if(ENABLE_DIRECTX_BACKEND)
@@ -477,6 +633,7 @@ PRIVATE
     ${D3D12_TARGETS}
     ${USD_TARGETS}
     ${DENOISER_TARGETS}
+    ${UPSCALER_TARGETS}
     stb::stb
     glm::glm
     Slang::Slang
@@ -491,10 +648,17 @@ PRIVATE
     "Source"                  # Source folder for PCH
     "${PROJECT_BINARY_DIR}"
     ${VERSION_FOLDER}
+    ${OPTIONAL_HEADERS}
 )
 
 # Set the default compile definitions.
-target_compile_definitions(${PROJECT_NAME} PRIVATE ${DEFAULT_COMPILE_DEFINITIONS})
+set(AURORA_COMPILE_DEFINITIONS ${DEFAULT_COMPILE_DEFINITIONS})
+if(ENABLE_HGI_BACKEND AND NOT APPLE)
+    # USD's hgiVulkan headers use std::byte, which conflicts with rpcndr.h's ::byte typedef.
+    # Safe to enable std::byte since Aurora doesn't use unqualified 'byte'.
+    list(REMOVE_ITEM AURORA_COMPILE_DEFINITIONS _HAS_STD_BYTE=0)
+endif()
+target_compile_definitions(${PROJECT_NAME} PRIVATE ${AURORA_COMPILE_DEFINITIONS})
 
 if(ENABLE_DIRECTX_BACKEND)
     # Compile the standalone compute shaders.
@@ -514,6 +678,14 @@ if(ENABLE_DIRECTX_BACKEND)
         VS_SHADER_ENTRYPOINT "PostProcessing"
             VS_SHADER_OUTPUT_HEADER_FILE "${COMPILED_SHADERS_DIR}/PostProcessing.hlsl.h"
         VS_SHADER_VARIABLE_NAME "g_pPostProcessingShader"
+        VS_SHADER_OBJECT_FILE_NAME " "
+    )
+    set_source_files_properties(Source/DirectX/Shaders/TemporalResolve.hlsl PROPERTIES
+        VS_SHADER_TYPE Compute
+        VS_SHADER_MODEL 6.3
+        VS_SHADER_ENTRYPOINT "TemporalResolve"
+        VS_SHADER_OUTPUT_HEADER_FILE "${COMPILED_SHADERS_DIR}/TemporalResolve.hlsl.h"
+        VS_SHADER_VARIABLE_NAME "g_pTemporalResolveShader"
         VS_SHADER_OBJECT_FILE_NAME " "
     )
 

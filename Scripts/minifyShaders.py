@@ -49,13 +49,13 @@ for outputFileIdx in range(0,outputFileCount):
     stringName = stringPrefix+baseOutputFile;
 
     # Run DXC to generate single preprocessed HLSL file (with all includes and ifdefs expanded)
-    dxcCommand = "dxc -D %s %s -P %s" % (dxcDefines[outputFileIdx], inputHLSLFile, preprocessedHLSLFile)
+    dxcCommand = ["dxc", "-D", dxcDefines[outputFileIdx], inputHLSLFile, "-P", preprocessedHLSLFile]
     print("Preprocessing %s with defines %s to %s" % (inputHLSLFile, dxcDefines[outputFileIdx], preprocessedHLSLFile))
     try:
-        compileRes = subprocess.check_output(dxcCommand, shell=True, stderr=subprocess.STDOUT)
+        compileRes = subprocess.check_output(dxcCommand, stderr=subprocess.STDOUT)
     except:
         # Exit if DXC command fails.
-        print("Failed to run DXC command (is DXC in the path?):\n"+dxcCommand)
+        print("Failed to run DXC command (is DXC in the path?):\n" + " ".join(dxcCommand))
         sys.exit(-1)
 
     # Print DXC output with a warning, if we have some (should not have any.)

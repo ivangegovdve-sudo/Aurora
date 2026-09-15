@@ -26,13 +26,21 @@ At this time, interactive use of Plasma is only supported on Windows and MacOS. 
 | Toggle directional light                            | L key                                                        |
 | Toggle diffuse only rendering                       | D key                                                        |
 | Toggle denoising                                    | SHIFT-D key                                                  |
+| Toggle temporal anti-aliasing resolve                | A key<br />Resolves the sub-pixel camera jitter into anti-aliasing when denoising is on and no vendor upscaler is active. Turning it off also turns the jitter off. |
+| Cycle upscaler                                      | U key, cycles in the following order:<br />1) Off<br />2) DLSS 4 (Super Resolution)<br />3) FSR<br />4) DLSS Ray Reconstruction (replaces the NRD denoiser rather than running after it)<br /><br />Selecting DLSS 4 or FSR turns denoising on if it was off: both are temporal reconstructors, not denoisers, and handing either a raw 1 spp path traced image makes them reject their history almost everywhere. Ray Reconstruction is excluded, since it replaces the denoiser. |
+| Cycle upscaler quality (render resolution)          | Q key, cycles in the following order:<br />1) Native / DLAA (1.0x, anti-aliasing only)<br />2) Quality (1.5x)<br />3) Balanced (1.7x)<br />4) Performance (2.0x)<br /><br />Anything but Native makes the path tracer render below the display resolution and lets the upscaler reconstruct, which is where the speed comes from. Has no effect while the upscaler is off. |
+| Cycle scene units                                   | SHIFT-U key (increase) and Y key (decrease)                  |
+| Toggle reference BSDF                               | B key                                                        |
+| Toggle orthographic projection                      | C key                                                        |
+| Print the current camera parameters to the console  | P key<br />Emits `--eye`, `--target` and `--fov` arguments for command-line rendering. |
+| Add a decal from a MaterialX document               | CTRL-W key (load) and W key (reload)                         |
 | Toggle transparent shadows *                        | O key                                                        |
 | Toggle ground plane                                 | G: matte shadow<br />SHIFT-G: matte reflection               |
 | Cycle importance sampling                           | I (letter) key, cycles in the following order: <br />1) Multiple importance sampling (MIS)<br />2) BSDF importance sampling<br />3) Environment light importance sampling |
 | Adjust exposure (½ stop increments)                 | + key (increase) and - key (decrease)                        |
 | Adjust max luminance for samples (firefly clamping) | CTRL+ key (increase) and CTRL- key (decrease)<br />(full stops starting at 1000 luminance) |
 | Adjust trace depth (path length) **                 | [ key (increase) and ] key (decrease)<br />(default 5, range is [1, 10]) |
-| Display debug buffers (AOVs)                        | ~ = Output (beauty)<br />1 = Output with errors<br />2 = ViewZ (depth)<br />3 = Normals<br />4 = Base Color<br />5 = Roughness<br />6 = Metalness <br /><br />The following are used for denoising:<br />7 = Diffuse radiance<br />8 = Diffuse hit distance<br />9 = Glossy radiance<br />0 = Glossy hit distance |
+| Display debug buffers (AOVs)                        | ~ = Output (beauty)<br />1 = Output with errors<br />2 = ViewZ (depth)<br />3 = Normals<br />4 = Base Color<br />5 = Roughness<br />6 = Metalness <br /><br />The following are used for denoising:<br />7 = Diffuse radiance<br />8 = Diffuse hit distance<br />9 = Glossy radiance<br />0 = Glossy hit distance<br /><br />N = NRD's own validation overlay (per-pixel accumulated frame counts, history-reset state and reprojection quality) |
 | Orbit View                                          | Left click and drag                                          |
 | Pan View                                            | Right click and drag                                         |
 | Dolly View                                          | Middle click and drag *OR*<br />Mouse wheel                  |

@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,12 +14,11 @@
 
 // Prefix containing the common code used by all material types.
 #include "Options.slang"
-#include "PathTracingCommon.slang"
-#include "ShadeFunctions.slang"
+#include "HitShaderEntryPoints.slang"
 #include "DefaultMaterial.slang"
-#include "GlobalBufferAccessors.slang"
-#include "InstancePipelineState.slang"
-#include "EvaluateMaterial.slang"
+#if ENABLE_NRD
+#include "NRD.slang"
+#endif
 
 // =================================================================================================
 // Ray Gen Shader
@@ -29,15 +28,6 @@
 // enable one shader stage at a time.
 // TODO: Consider to use separate shader files for each shader stage.
 #ifndef DISABLE_HGI_SHADER_STAGE_RAY_GEN
-// Must match root signature defined in PTShaderLibrary::initRootSignatures and the descriptors 
-// uploaded to the heap in PTRenderer::updateOutputResources and PTRenderer::updateDenoisingResources.
-[[vk::binding(1)]] RWTexture2D<float4> gResult : register(u0);
-RWTexture2D<float> gDepthNDC : register(u1);
-RWTexture2D<float> gDepthView : register(u2);
-RWTexture2D<float4> gNormalRoughness : register(u3);
-RWTexture2D<float4> gBaseColorMetalness : register(u4);
-RWTexture2D<float4> gDiffuse : register(u5);
-RWTexture2D<float4> gGlossy : register(u6);
 
 // Results of the path tracing sample.
 struct Output
@@ -70,7 +60,7 @@ struct Output
         metalness = 0.1f;
         roughness = 0.1f;
         baseColor = BLACK;
-        depthView = INFINITY;
+        depthView = -INFINITY;
         direct = 0.0f;
         alpha = 0.0;
     }
@@ -83,418 +73,177 @@ void RayGenShader()
     // Get the max trace depth from frame settings.
     int maxTraceDepth = gFrameData.traceDepth;
 
-    // Is opaque shadow hits only enabled in frame settings.
-    bool onlyOpaqueShadowHits = gFrameData.isForceOpaqueShadowsEnabled;
-
     // Get the dispatch dimensions (screen size), dispatch index (screen coordinates), and sample
     // index.
     uint2 screenSize = DispatchRaysDimensions().xy;
     uint2 screenCoords = DispatchRaysIndex().xy;
-    uint sampleIndex = gSampleData.sampleIndex;
+    // Mix in the per-frame seed offset. With a temporal stage the sample index is 0 every frame, so
+    // without this every frame would draw the identical random sequence and RELAX would read the
+    // same bright paths as a stable signal. The offset is 0 when no temporal stage is active.
+    uint sampleIndex = gSampleData.sampleIndex + gSampleData.seedOffset;
 
-    // Initialize a random number generator, so that each sample and pixel gets a unique seed.
-    Random rng = initRand(sampleIndex, screenSize, screenCoords);
+    InstanceRayPayload rayPayload;
+    rayPayload.rng             = initRand(sampleIndex, screenSize, screenCoords);
+    rayPayload.totalDistance   = 0.0f;
+    rayPayload.rayContribution = float3(1.0f, 1.0f, 1.0f);
+    rayPayload.packedData      = 0;
+    rayPayload.rayType         = CAMERA_RAY;
+    rayPayload.misLobeID       = NO_SECONDARY_RAY;
+    rayPayload.outputAlpha     = 0.0f;
+    rayPayload.isPrimaryRay    = true;
+    rayPayload.isInside        = false;
 
     // Compute a camera ray (origin and direction) for the current screen coordinates. This applies
     // a random offset to support antialiasing and depth of field.
     float3 rayOrigin;
     float3 rayDirection;
-    int rayType = CAMERA_RAY;
     computeCameraRay(screenCoords, screenSize, gFrameData.cameraInvView, gFrameData.viewSize,
-        gFrameData.isOrthoProjection, gFrameData.focalDistance, gFrameData.lensRadius, rng, rayOrigin,
+        gFrameData.isOrthoProjection, gFrameData.focalDistance, gFrameData.lensRadius,
+        gFrameData.cameraJitter, gFrameData.isTemporalJitterEnabled, rayPayload.rng, rayOrigin,
         rayDirection);
+#if DIRECTX
+    // Saved before the loop overwrites them. The primary leg's hit distance is recovered from the
+    // depth-0 viewZ below, and gDepthView will be overwritten by secondary shaders later.
+    float3 primaryRayDir    = rayDirection;
+    float savedPrimaryViewZ = -INFINITY;
+#endif // DIRECTX
 
     // The results of the tracing the entire ray path through the scene.
     Output output;
     output.clear();
 
-    // The ray t (distance along path.)
-    float t = 0;
+#if DIRECTX
+    if (gFrameData.isDenoisingAOVsEnabled)
+        gMotionVectors[screenCoords] = float4(0.0f);
+#endif // DIRECTX
 
     // Prepare the environment data structure.
     Environment environment = prepareEnvironmentValues();
 
-    // The ray contribution is how much the current ray segment contributes to the overall path. 
-    // It starts at 1.0 and then is scaled downwards at each subsequent segment.
-    float3 rayContribution = 1.0f;
-
-    // Is the current ray segment a primary ray?
-    bool isPrimaryRay = true;
-
-    // Has the path been terminated?
-    bool pathEnded = false;
-    InstanceRayPayload rayPayload;
-
     // Iterate through every segment in the ray path, until maximum depth is reached or path is ended.
-    for (int rayDepth = 0; rayDepth <= maxTraceDepth && !pathEnded; rayDepth++)
+    for (int rayDepth = 0; rayDepth <= maxTraceDepth && !rayPayload.pathEnded; rayDepth++)
     {
-        // The minimum T for this ray segment is zero for the initial camera ray otherwise use
-        // a small epsilon to avoid self-intersection.
-        float minT = rayDepth == 0 ? 0.0f : M_RAY_TMIN;
-
-        // If this ray collides with nothing, should the background or lighting environment be shaded?
-        bool shadeBackgroundOnMiss = isPrimaryRay || rayType == TRANSMISSION_LOBE || rayType == GROUND_PLANE_REFLECTION_RAY;
-
-        // Direct light contribution for this ray segment.
-        float3 direct = 0;
-
-        // Indirect light contribution for this ray segment.
-        IndirectOutput indirect;
-        indirect.clear();
-
-        // How much the contribution will be scaled for the subsequent ray segments (based on sampling PDF of this surface's material.)
-        float3 nextRayContribution = 1.0;
-
-        // The ray type of the next ray (based on sampling lobe produced from sampling this surface's material.)
-        int nextRayType;
-
         // Have we exceeded ray depth for this path?
         if (rayDepth == maxTraceDepth)
         {
+            // If this ray collides with nothing, should the background or lighting environment be shaded?
+            bool shadeBackgroundOnMiss = rayPayload.isPrimaryRay
+                || rayPayload.rayType == TRANSMISSION_LOBE
+                || rayPayload.rayType == GROUND_PLANE_REFLECTION_RAY;
+
             // If we have reached the end of this path, evaluate the environment and terminate the path.
-            direct = evaluateEnvironment(environment, rayDirection, shadeBackgroundOnMiss);
-            pathEnded = true;
+            rayPayload.direct = evaluateEnvironment(environment, rayDirection, shadeBackgroundOnMiss);
+            rayPayload.direct *= rayPayload.rayContribution;
+            rayPayload.pathEnded = true;
         }
         else
         {
-            bool absorbedByGroundPlane = false;
+            // The minimum T for this ray segment is zero for the initial camera ray otherwise use
+            // a small epsilon to avoid self-intersection.
+            float minT = rayDepth == 0 ? 0.0f : M_RAY_TMIN;
 
             // Trace an instance ray that will return the instance shading result from the closest hit, if any.
+            rayPayload.rayDepth = rayDepth;
             traceInstanceRay(gScene, rayOrigin, rayDirection, minT, rayPayload);
 
-            // Add the contribution of the ground plane, if enabled.
-            float3 groundPlanePosition = 0;
-            float groundPlaneDistance = INFINITY;
-            if (isPrimaryRay && gGroundPlane.enabled && intersectGroundPlane(gGroundPlane, rayOrigin, rayDirection, groundPlanePosition, groundPlaneDistance) && groundPlaneDistance < rayPayload.distance)
+            rayOrigin = rayPayload.nextRayOrigin;
+            rayDirection = rayPayload.nextRayDirection;
+            output.alpha = rayPayload.outputAlpha;
+
+            if (rayPayload.skipContribution)
             {
-                float3 groundPlaneRayDirection;
-                float3 groundPlaneRayOrigin;
-                float3 groundPlaneRayColor;
-          
-                // Shade the ground plane.
-                int groundPlaneRayType = setupGroundPlaneRay(groundPlanePosition, gGroundPlane, gScene, environment, rayOrigin, rayDirection,
-                onlyOpaqueShadowHits, maxTraceDepth, rng,
-                groundPlaneRayDirection, groundPlaneRayOrigin, groundPlaneRayColor);
-
-                if (groundPlaneRayType == GROUND_PLANE_REFLECTION_RAY)
-                {
-                    // The ground plane reflection path was selected, continue the path as a reflection ray.
-                    nextRayType = GROUND_PLANE_REFLECTION_RAY;
-                    
-                    // Setup the next ray direction, origin and contribution from ground plane.
-                    nextRayContribution = groundPlaneRayColor;
-                    rayDirection = groundPlaneRayDirection;
-                    rayOrigin = groundPlaneRayOrigin;
- 
-                    // The ray was absorbed.
-                    absorbedByGroundPlane = true;
-                    
-                    // This ray is no longer a primary ray.
-                    isPrimaryRay = false;
-                }
-                else
-                {
-                    // If the ray was not absorbed scale the contribution based on ground plane color.
-                    rayContribution *= groundPlaneRayColor;
-                }
-            }
-                
-            if (!absorbedByGroundPlane)
-            {
-                // Did the ray segment hit any geometry?
-                if (rayPayload.hit())
-                {
-         
-                    // Increment t by the distance of the ray hit.
-                    t += rayPayload.distance;
-                    
-                    // View direction is inverse of ray direction.
-                    float3 V = -rayDirection;
-
-                    // Shading data and normal are taken from ray hit results.
-                    ShadingData shading = shadingDataFromInstanceResult(rayPayload);
-
-                    // Were any layers hit?  If this remains false, ray was not absorbed by any of the layer, including base layer..
-                    bool hitLayer = false;
-
-                    // Get the UV for the base layer (as the UVs in the shading struct will be over-written in layer loop.)
-                    float2 baseLayerUV = shading.texCoord;
-
-// Only include code for layer loop if ENABLE_LAYERS is set to 1 (otherwise just set layerIndex to zero.)
-#if ENABLE_LAYERS
-                    // Get layer count from the instance header.
-                    int layerCount = instanceLayerCount(rayPayload.instanceBufferOffset);
-                        
-                    // Iterate through all the layers in reverse order, ending with base layer.
-                    for (int li = layerCount; li >= 0; li--)
-                    {
-#else
-                    int li = 0;
-                    {
-#endif
-
-
-                        // Compute material buffer offset, either for layer material or base layer.
-                        int materialBufferOffset;
-                        if (li == 0)
-                        {
-                            materialBufferOffset = instanceMaterialBufferOffset(rayPayload.instanceBufferOffset);
-                            shading.texCoord = baseLayerUV;
-                        }
-                        else
-                        {
-                            int layerIndex = li - 1;
-                            materialBufferOffset = instanceLayerMaterialBufferOffset(rayPayload.instanceBufferOffset, layerIndex);
-                            shading.texCoord = computeLayerUV(rayPayload.instanceBufferOffset, layerIndex, shading);
-                        }
-
-                        // Retrieve the shader index for the layer material.
-                        // This is stored in the material header in the global material byte buffer,
-                        // at a position indicated by instance's gMaterialBufferOffset.
-                        int shaderIndex = materialShaderIndex(materialBufferOffset);
-
-                        // Was a normal generated by the material?
-                        bool isGeneratedNormal = false;
-
-                        // Material normal (overriden by material setup, if material has normal map.)
-                        float3 materialNormal = shading.normal;
-
-                        // Initialize the material using the shader index with the externally defined evaluate function.
-                        // This function will be generated at runtime and linked with the rest of the code.
-                        Material material = evaluateMaterialForShader(shaderIndex, shading,
-                                     materialBufferOffset, materialNormal, isGeneratedNormal);
-                   
-                        // Is this a primary ray?
-                        if (isPrimaryRay)
-                        {
-                            // Set the output normal from the first hit.
-                            output.normal = materialNormal;
-
-                            // Clamp the output roughness for the ray path to a minimum, because the denoiser
-                            // handles materials with low (near-zero) roughness poorly, leading to a noisy result. This addresses
-                            // two separate but related issues: low-roughness metallic materials reflecting
-                            // noisy surroundings, and low- roughness dielectric materials where the glossy
-                            // lobe is sparsely sampled. NOTE: The roughness in the ray payload is used for
-                            // denoising only. The material specular roughness (used in shading) is not
-                            // modified here.
-                            static const float kMinRoughness = 0.05f;
-                            float clampedRoughness = max(material.specularRoughness, kMinRoughness);
-
-                            // Set the output materal properties for the first hit.
-                            output.metalness = material.metalness;
-                            output.roughness = clampedRoughness;
-                            output.baseColor = material.baseColor;
-
-                            // Set the output view-space depth from ray t.
-                            output.depthView = t;
-
-                            // Set the output Normalized Device Coordinate (NDC) depth from hit position.
-                            float4 positionClip =
-                                mul(gFrameData.cameraViewProj, float4(shading.geomPosition, 1.0f));
-                            output.depthNDC = (positionClip.z / positionClip.w + 1.0f) / 2.0f;
-                        }
-
-                        // Compute transparency from inverse of opacity.
-                        float3 transparency = 1.0f - material.opacity;
-
-                        // Randomly choose if next ray segment hit any opaque geometry for this layer based on the transparency of the surface.
-                        float P = luminance(transparency);
-                        hitLayer = random2D(rng).x >= P;
-                        float3 directionalShadowRayDirection = 0;
-                        float3 directionalLightColor = 0;
-                        bool hasDirectionalLight = false;
-                        if (hitLayer)
-                        {
-                            // This ray struck opaque geometry, shade the collision as the next ray segment in the path.
-
-                            // If a new normal has been generated, transform it to world space and build a
-                            // corresponding basis from it.
-                            if (isGeneratedNormal)
-                            {
-                                shading.normal = materialNormal;
-                                buildBasis(shading.normal, shading.tangent, shading.bitangent);
-                                shading.bitangentWorld = shading.bitangent; // Keep MaterialX (>= 1.39.x) alias in sync
-                            }
-
-                            // Add the emissive light for this collision to the direct light for this ray segement.
-                            direct += shadeEmission(material);
-
-                            // Shade with a randomly selected global distant light. Skip this if there are
-                            // no distant lights.
-                            if (gFrameData.lights.distantLightCount > 0)
-                            {
-                                // Choose a random distant light for this sample, by computing an index in
-                                // range the 0 to (distantLightCount-1).
-                                int lightIdx =
-                                    int(random2D(rng).x * float(gFrameData.lights.distantLightCount));
-
-                                // Skip if the light has zero intensity.
-                                if (gFrameData.lights.distantLights[lightIdx].colorAndIntensity.a > 0.0f)
-                                {
-                                    // Shade the light, computing a color and a shadow ray direction to be emitted later.
-                                    directionalLightColor = shadeDirectionalLight(
-                                        gFrameData.lights.distantLights[lightIdx].direction,
-                                        gFrameData.lights.distantLights[lightIdx].colorAndIntensity,
-                                        gFrameData.lights.distantLights[lightIdx].cosRadius,
-                                        material, shading, V, rng, directionalShadowRayDirection);
-                                    hasDirectionalLight = true;
-                                }
-                            }
-
-                            // The multiple importance sampling (MIS) environment shade function will return these values.
-                            // They will be used to emit shadow rays for MIS material and light at the end of the loop.
-                            int misLobeID;
-                            bool misEmitsMaterialShadowRay;
-                            float3 misMaterialResult = 0;
-                            float3 misMaterialShadowRayDirection = 0;
-                            bool misEmitsLightShadowRay;
-                            float3 misLightResult = 0;
-                            float3 misLightShadowRayDirection = 0;
-
-                            // Shade with the environment light with multiple importance sampling.
-                            shadeEnvironmentLightMIS(environment, material, shading, V, rng, misLobeID,
-                                misEmitsMaterialShadowRay, misMaterialResult, misMaterialShadowRayDirection,
-                                misEmitsLightShadowRay, misLightResult, misLightShadowRayDirection
-                            );
-
-                            // Scale the ray contribution (for this ray segment and subsequent ones) by the inverse of 
-                            // the transparency, and normalized by the probability of this segment being considered opaque.
-                            rayContribution *= material.opacity / (1.0f - P);
-
-                            // If the output alpha is zero and this was a transmission lobe ray, pass along an
-                            // alpha of zero. If all the path segments beyond this hit have transparent or transmissive
-                            // the final result will be zero, otherwise the alpha is will be one (opaque).
-                            output.alpha = (output.alpha == 0.0f && rayType == TRANSMISSION_LOBE) ? 0.0f : 1.0f;
-
-                            // Sample the PDF for the current surface material, and compute the next ray direction and contribution.
-                            nextRayType = setupIndirectLightRay(material, shading, V, rayDepth, maxTraceDepth, rng,
-                                rayDirection, rayOrigin, nextRayContribution);
-
-                            // Emit all the shadows rays (for the directional light and MIS environment).
-                            // Emitting them here at the end of loop avoids storing all the material state in registers, and is a huge performance optimisation.
-                            // All the shadow rays use the same origin, calculated from geometric position or intersection position (depending on whether back-face hit.)
-                            float3 shadowRayOrigin = dot(V, shading.normal) < 0.0f ? shading.geomPosition : shading.position;
-
-                            // Trace shadow ray for directional light, if we have one.
-                            float3 lightVisibility;
-                            if (hasDirectionalLight)
-                            {
-                                // Add directional result to the direct light.
-                                lightVisibility = traceShadowRay(gScene, shadowRayOrigin, directionalShadowRayDirection, M_RAY_TMIN, onlyOpaqueShadowHits, rayDepth, maxTraceDepth);
-                                direct += lightVisibility * directionalLightColor;
-                            }
-                            
-                            // Trace shadow rays for material and light component of MIS environment (if we have them.)
-                            if (misEmitsLightShadowRay || misEmitsMaterialShadowRay)
-                            {
-                                float3 misResult = 0;
-                                if (misEmitsMaterialShadowRay)
-                                {
-                                    lightVisibility = traceShadowRay(gScene, shadowRayOrigin, misMaterialShadowRayDirection, M_RAY_TMIN, onlyOpaqueShadowHits, rayDepth, maxTraceDepth);
-                                    misResult += lightVisibility * misMaterialResult;
-                                }
-                                if (misEmitsLightShadowRay)
-                                {
-                                    lightVisibility = traceShadowRay(gScene, shadowRayOrigin, misLightShadowRayDirection, M_RAY_TMIN, onlyOpaqueShadowHits, rayDepth, maxTraceDepth);
-                                    misResult += lightVisibility * misLightResult;
-                                }
-                                
-                                // If the material sampling for MIS environment returned a diffuse lobe, add the MIS result to the diffuse indirect result, otherwise add to glossy result.
-                                // Set the hit distance to infinity (as the environment assumed to be at infinite distance.)
-                                if (misLobeID == DIFFUSE_LOBE)
-                                {
-                                    indirect.diffuse += misResult;
-                                    indirect.diffuseHitDist = INFINITY;
-                                }
-                                else
-                                {
-                                    indirect.glossy += misResult;
-                                    indirect.glossyHitDist = INFINITY;
-                                }
-
-                            }
-
-                            // If next ray not needed (as contribution is too small) terminate the path.
-                            if (nextRayType == NO_SECONDARY_RAY)
-                                pathEnded = true;
-
-                            // This is no longer a primary ray.
-                            isPrimaryRay = false;
-
-                            // Break out of loop when ray is absorbed by a layer (if we are in a loop.)
-#if ENABLE_LAYERS
-                            break;
-#endif
-                        }
-                        // Scale the ray contribution (for this ray segment and subsequent ones) by transparency, and normalized
-                        // by the probability of this layer being considered transparent.
-                        else
-                            rayContribution *= transparency / P;
-                    }
-
-                    // Handle case were no layers were hit, including base layer.
-                    if (!hitLayer)
-                    {
-                        // No opaque geometry was hit in any layer, continue the ray path as if no collision occurred.
-                        rayDirection = -V;
-                        rayOrigin = shading.geomPosition;
-
-                        // All other ray variables remain the same.
-
-                        // Continue to the next path segment without applying contribution (as if this
-                        // hit didn't happen.)
-                        continue;
-                    }
-                }
-                else
-                {
-                    // No geometry was hit, shade the ray using the background color.
-                    // If needed otherwise do nothing, as environment lighting was calculated during MIS environment shading.
-                    if (shadeBackgroundOnMiss)
-                        direct = evaluateEnvironment(environment, rayDirection, true);
-
-                    // Terminate the path.
-                    pathEnded = true;
-                }
+                rayPayload.skipContribution = false;
+                continue;
             }
         }
-    
-        // Scale all the lighting components for the current ray segment, indirect and direct, by the contribution.
-        direct *= rayContribution;
-        indirect.diffuse *= rayContribution;
-        indirect.glossy *= rayContribution;
 
         // How the result is accumulated depends on whether this ray is a primary ray.
-        if (isPrimaryRay)
+        if (rayDepth == 0)
         {
-            // If it is a primary ray, accumulate direct and indirect components in to equivalent component in the output data.
-            output.direct = direct;
-            output.indirect = indirect;
+#if DIRECTX
+            // Capture viewZ written by the depth-0 hit or miss shader before a secondary ray
+            // overwrites it. Only read it when the AOVs are enabled: gDepthView is not
+            // allocated otherwise, and its descriptor slot is left uninitialized.
+            if (gFrameData.isDenoisingAOVsEnabled)
+            {
+                savedPrimaryViewZ = gDepthView[screenCoords].r;
+            }
+#endif // DIRECTX
+            // The hit and miss shaders guard their AOV writes on isPrimaryRay, which
+            // traceInstanceRay never clears, so clear it here to stop secondary rays overwriting
+            // gDepthView and the other guides.
+            rayPayload.isPrimaryRay = false;
+
+            // Deliberately NOT soft-clamped like the secondary bounce below: that clamp compensates
+            // for probabilistic lobe selection, and this MIS result already divides by real PDFs,
+            // so clamping it would discard genuine energy from bright reflections.
+            output.direct = rayPayload.direct;
+
+            // Route the environment-MIS result to its lobe's channel, but do NOT let it set that
+            // channel's hit distance: environment lighting has none, and NRD requires the in-lobe
+            // first bounce (recorded below) instead, or exactly 0 for a lobe that was never
+            // sampled -- the marker AREA_3X3 reconstructs from.
+            if (rayPayload.misLobeID == DIFFUSE_LOBE)
+            {
+                output.indirect.diffuse = rayPayload.indirect;
+            }
+            else
+            {
+                output.indirect.glossy = rayPayload.indirect;
+            }
         }
         else
         {
             // If this secondary ray compute the total radiance from all the lighting components.
-            float3 radiance = direct + indirect.diffuse + indirect.glossy;
+            float3 radiance = rayPayload.direct + rayPayload.indirect;
 
-            // Accumulate the total radiance into diffuse or glossy component of output indirect 
-            // component, based on lobe this ray segment originated from.
-            if (rayType == DIFFUSE_LOBE)
+            // Soft-clamp this bounce's radiance before it is added to the running indirect total
+            // and carried into further bounces, catching a spike where it originates rather than
+            // after it has compounded. Biased, so the renderer only enables it for a denoiser; a
+            // scale of zero means off, not "clamp to black".
+            if (gFrameData.indirectBounceClampScale > 0.0f)
+            {
+                adjustRadiance(
+                    gFrameData.maxLuminance * gFrameData.indirectBounceClampScale, false, radiance);
+            }
+
+            // Hit distance is an NRD input only. Recover the primary leg from the viewZ saved at
+            // depth 0 -- Aurora stores signed view Z, so primaryHitT = -viewZ / dot(dir, camFwd).
+            // A secondary ray that missed does not increment totalDistance, so a non-positive
+            // result means it reached the environment.
+            float hitDist = 0.0f;
+#if DIRECTX
+            if (gFrameData.isDenoisingAOVsEnabled)
+            {
+                float3 camFwd       = -gFrameData.cameraInvView[2].xyz;
+                float primaryHitT   = -savedPrimaryViewZ / dot(primaryRayDir, camFwd);
+                float secondaryHitT = rayPayload.totalDistance - primaryHitT;
+                hitDist             = (secondaryHitT > 0.0f) ? secondaryHitT : INFINITY;
+            }
+#endif // DIRECTX
+
+            // Accumulate the total radiance into the diffuse or glossy component, based on the lobe
+            // this ray segment originated from.
+            //
+            // Only the FIRST bounce sets the hit distance. NRD takes the first bounce's hitT as is,
+            // but requires later bounces to be adjusted for curvature and lobe energy dissipation
+            // on the application side, which Aurora does not do.
+            if (rayPayload.rayType == DIFFUSE_LOBE)
             {
                 output.indirect.diffuse += radiance;
-                output.indirect.diffuseHitDist = t;
+                if (rayDepth == 1)
+                    output.indirect.diffuseHitDist = hitDist;
             }
             else
             {
                 output.indirect.glossy += radiance;
-                output.indirect.glossyHitDist = t;
+                if (rayDepth == 1)
+                    output.indirect.glossyHitDist = hitDist;
             }
         }
 
-        // Scale the contribution to be used in subsequent segments.
-        rayContribution *= nextRayContribution;
-
         // Set the ray type for the next segment.
-        rayType = nextRayType;
+        rayPayload.rayType = rayPayload.nextRayType;
     }
 
     float3 finalRadiance = output.direct + output.indirect.diffuse + output.indirect.glossy;
@@ -503,44 +252,85 @@ void RayGenShader()
     // Adjust the radiance of the sample, e.g. to perform corrections.
     adjustRadiance(gFrameData.maxLuminance, gFrameData.isDisplayErrorsEnabled, result.rgb);
 
+    // Clamp each radiance lobe before storing it in the NRD input AOVs: RELAX sanitizes NaN and
+    // Inf itself, but this keeps very bright fireflies out of its temporal history. The ceiling
+    // must be maxLuminance, the same one the non-denoised path uses just above, or a legitimately
+    // bright signal reads dimmer with denoising on than off.
+    if (gFrameData.isDenoisingEnabled)
+    {
+        adjustRadiance(gFrameData.maxLuminance, false, output.direct);
+        adjustRadiance(gFrameData.maxLuminance, false, output.indirect.diffuse);
+        adjustRadiance(gFrameData.maxLuminance, false, output.indirect.glossy);
+    }
+
     // Store the result in the "result" output texture. If denoising is enabled, only the "direct"
     // (non-denoised) shading is included in the result texture, as the rest of shading is stored in
     // the denoising AOVs below.
     result.rgb = gFrameData.isDenoisingEnabled ? output.direct : result.rgb;
     gResult[screenCoords] = result;
 
-    // Store the NDC depth value, if enabled. The value is only stored if the first sample was
-    // computed (i.e. there is no previously stored value), or it is less than the previously stored
-    // value.
-    if (gFrameData.isDepthNDCEnabled && (sampleIndex == 0 || output.depthNDC < gDepthNDC[screenCoords]))
-    {
-        gDepthNDC[screenCoords] = output.depthNDC;
-    }
-
-    // Prepare and store the data for the denoising AOVs, if enabled.
-    // NOTE: Only the data for the last sample is stored, with the expectation that the sample count
-    // will be one when these AOVs are enabled.
+    // XXX: Vulkan does not support denoising.
+#if DIRECTX
     if (gFrameData.isDenoisingAOVsEnabled)
     {
-        // Remap the normal components from [-1.0, 1.0] to [0.0, 1.0] for unsigned normalized
-        // output.
-        float3 normalEncoded = (output.normal + 1.0f) * 0.5f;
+        // Material demodulation, which NRD requires: it denoises radiance, not irradiance, so the
+        // BRDF must be applied after it runs. Accumulation.hlsl multiplies the same factors back
+        // in. Read back from the guide AOVs rather than recomputed, so both halves of the round
+        // trip and DLSS Ray Reconstruction see identical values.
+        float4 guide             = gGuideNormalRoughness[screenCoords];
+        float4 baseColorMetalness = gBaseColorMetalness[screenCoords];
+        float3 albedo            = baseColorMetalness.rgb * (1.0f - baseColorMetalness.a);
+        float3 Rf0               = lerp(0.04f.xxx, baseColorMetalness.rgb, baseColorMetalness.a);
 
-        // Prepare the diffuse and glossy radiance and hit distances. The hit distances are
-        // normalized relative to the scene size, so they are always in [0.0, 1.0].
+        float3 diffFactor;
+        float3 specFactor;
+#if ENABLE_NRD
+        NRD_MaterialFactors(guide.xyz, -primaryRayDir, albedo, Rf0, guide.w, diffFactor, specFactor);
+#else
+        // Same shape as NRD_MaterialFactors, floored the same way, so the non-NRD build stays
+        // self-consistent through the same round trip.
+        diffFactor = lerp(0.02f.xxx, 1.0f.xxx, albedo);
+        specFactor = lerp(0.02f.xxx, 1.0f.xxx, Rf0 * lerp(0.1f, 1.0f, guide.w));
+#endif
+        gDemodDiffuse[screenCoords]  = float4(diffFactor, 1.0f);
+        gDemodSpecular[screenCoords] = float4(specFactor, 1.0f);
+
+        output.indirect.diffuse /= diffFactor;
+        output.indirect.glossy  /= specFactor;
+
+        // Prepare the diffuse and glossy radiance and hit distances for NRD.
+#if ENABLE_NRD
+        // RELAX takes the raw world-space hit distance. Three states, set by IndirectOutput.clear()
+        // and the depth >= 1 code above:
+        //   -1.0  lobe not sampled -> 0.0, the marker AREA_3X3 reconstructs from.
+        //   INF   secondary ray reached the environment -> kEnvironmentHitDist.
+        //   > 0   secondary ray hit geometry -> the distance as is.
+        //
+        // The environment case must NOT collapse to 0.0, which is the "not sampled" marker: RELAX
+        // drives specular virtual-motion reprojection from hit distance, so 0.0 would claim the
+        // reflection sits on the surface. The sentinel is beyond any plausible scene extent but
+        // inside fp16, since these AOVs are R16G16B16A16_FLOAT.
+        static const float kEnvironmentHitDist = 32768.0f;
+        float diffuseRawHitDist = isinf(output.indirect.diffuseHitDist)
+            ? kEnvironmentHitDist
+            : (output.indirect.diffuseHitDist > 0.0f ? output.indirect.diffuseHitDist : 0.0f);
+        float glossyRawHitDist  = isinf(output.indirect.glossyHitDist)
+            ? kEnvironmentHitDist
+            : (output.indirect.glossyHitDist  > 0.0f ? output.indirect.glossyHitDist  : 0.0f);
+        float4 diffusePacked = RELAX_FrontEnd_PackRadianceAndHitDist(output.indirect.diffuse, diffuseRawHitDist, true);
+        float4 glossyPacked  = RELAX_FrontEnd_PackRadianceAndHitDist(output.indirect.glossy,  glossyRawHitDist,  true);
+#else
         float diffuseHitDist = saturate(output.indirect.diffuseHitDist / gFrameData.sceneSize);
-        float glossyHitDist = saturate(output.indirect.glossyHitDist / gFrameData.sceneSize);
-        float4 diffusePacked =
-            float4(output.indirect.diffuse, diffuseHitDist); // TODO: use NRD packing
-        float4 glossyPacked = float4(output.indirect.glossy, glossyHitDist); // TODO: use NRD packing
+        float glossyHitDist  = saturate(output.indirect.glossyHitDist  / gFrameData.sceneSize);
+        float4 diffusePacked = float4(output.indirect.diffuse, diffuseHitDist);
+        float4 glossyPacked  = float4(output.indirect.glossy, glossyHitDist);
+#endif
 
         // Store the data for the denoising AOVs.
-        gDepthView[screenCoords] = output.depthView;
-        gNormalRoughness[screenCoords] = float4(normalEncoded, output.roughness);
-        gBaseColorMetalness[screenCoords] = float4(output.baseColor, output.metalness);
         gDiffuse[screenCoords] = diffusePacked;
         gGlossy[screenCoords] = glossyPacked;
     }
+#endif // DIRECTX
 }
 #endif // DISABLE_HGI_SHADER_STAGE_RAY_GEN
 
@@ -549,103 +339,89 @@ void RayGenShader()
 // =================================================================================================
 #ifndef DISABLE_HGI_SHADER_STAGE_MISS
 // Shadow miss results sets the visibility to WHITE.
-[shader("miss")]void ShadowMissShader(inout ShadowRayPayload rayPayload)
+[shader("miss")]
+void ShadowMissShader(inout ShadowRayPayload rayPayload)
 {
     rayPayload.visibility = WHITE;
 }
 #endif // DISABLE_HGI_SHADER_STAGE_MISS
 
 // =================================================================================================
-// Instance closest-hit shader
+// Instance miss shader
 // =================================================================================================
-#ifndef DISABLE_HGI_SHADER_STAGE_CLOSEST_HIT
-// Closest hit shader for instance rays.  Just returns the shading data.
-[shader("closesthit")]void InstanceClosestHitShader(
-    inout InstanceRayPayload rayPayload, in BuiltInTriangleIntersectionAttributes hit)
+#ifndef DISABLE_HGI_SHADER_STAGE_INSTANCE_MISS
+
+[shader("miss")]
+void InstanceMissShader(inout InstanceRayPayload rayPayload)
 {
+    float3 rayOrigin           = WorldRayOrigin();
+    float3 rayDirection        = WorldRayDirection();
+    Environment environment    = prepareEnvironmentValues();
 
-    // Get the  interpolated vertex data for the hit triangle, at the hit barycentric coordinates.
-    uint triangleIndex = PrimitiveIndex();
+    // Add the contribution of the ground plane, if enabled.
+    bool absorbedByGroundPlane = evaluateGroundPlane(rayPayload, rayOrigin, rayDirection, environment);
+    if (absorbedByGroundPlane)
+        return;
 
-    // Compute barycentrics for hit.
-    float3 barycentrics = computeBarycentrics(hit);
+    // If this ray collides with nothing, should the background or lighting environment be shaded?
+    bool shadeBackgroundOnMiss = rayPayload.isPrimaryRay
+        || rayPayload.rayType == TRANSMISSION_LOBE
+        || rayPayload.rayType == GROUND_PLANE_REFLECTION_RAY;
 
-    // Set the instance index.
-    rayPayload.instanceIndex = InstanceID();
-    
-    // Return the shading data in the ray payload.
-    ShadingData shading = computeShadingData(gGeometry, triangleIndex, hit.barycentrics, ObjectToWorld3x4());
-    rayPayload.geomPosition = shading.geomPosition;
-    rayPayload.texCoord = shading.texCoord;
-    rayPayload.objectNormal = shading.objectNormal;
-    rayPayload.objectPosition = shading.objectPosition;
-    rayPayload.indices = shading.indices;
-    rayPayload.bary2 = hit.barycentrics;
-    
-    // Return the ray distance from the collision t.
-    rayPayload.distance = RayTCurrent();
+    // No geometry was hit, shade the ray using the background color.
+    // If needed otherwise do nothing, as environment lighting was calculated during MIS environment shading.
+    if (shadeBackgroundOnMiss)
+    {
+        rayPayload.direct = evaluateEnvironment(environment, WorldRayDirection(), true);
+        rayPayload.direct *= rayPayload.rayContribution;
+    }
 
-    // Return the offset within global instance buffer.
-    rayPayload.instanceBufferOffset = gGeometry.getBufferOffset();
+    // Is this a primary ray?
+    if (rayPayload.isPrimaryRay)
+    {
+        // Prepare and store the data for the denoising AOVs, if enabled.
+        // NOTE: Only the data for the last sample is stored, with the expectation that the sample count
+        // will be one when these AOVs are enabled.
+        // XXX: Vulkan does not support denoising.
+#if DIRECTX
+        uint2 screenCoords = DispatchRaysIndex().xy;
+
+        if (gFrameData.isDenoisingAOVsEnabled)
+        {
+            // Store the data for the denoising AOVs.
+            // A large FINITE sentinel, not -INFINITY: RELAX reconstructs a neighbour's world
+            // position from its viewZ before masking the sample out, where an infinity yields
+            // INF * 0 = NaN and contaminates the geometry pixels next to the sky. See
+            // FrameData::skyViewZ in RendererBase.h.
+            gDepthView[screenCoords] = gFrameData.skyViewZ;
+            gNormalRoughness[screenCoords] = float4(0.0f, 0.0f, 0.0f, 0.1f);
+            gBaseColorMetalness[screenCoords] = float4(0.0f, 0.0f, 0.0f, 0.1f);
+            // Sky pixels have no surface, but the guide must still hold a well-formed unit normal:
+            // Ray Reconstruction consumes it for every pixel. Face it back along the view ray.
+            gGuideNormalRoughness[screenCoords] = float4(-rayDirection, 1.0f);
+
+            // NRD treats sky as outside its denoising range, but DLSS and FSR reproject every
+            // pixel including sky; see computeSkyMotionVector.
+            gMotionVectors[screenCoords] = computeSkyMotionVector(rayDirection);
+        }
+
+        // Store the NDC depth value, if enabled. The value is only stored if the first sample was
+        // computed (i.e. there is no previously stored value), or it is less than the previously stored
+        // value.
+        if (gFrameData.isDepthNDCEnabled)
+        {
+            // Set the output Normalized Device Coordinate (NDC) depth from hit position.
+            float depthNDC = 1.0f;
+
+            if (gSampleData.sampleIndex == 0 || depthNDC < gDepthNDC[screenCoords])
+            {
+                gDepthNDC[screenCoords] = depthNDC;
+            }
+        }
+#endif // DIRECTX
+    }
+
+    // Terminate the path.
+    rayPayload.pathEnded = true;
 }
-#endif // DISABLE_HGI_SHADER_STAGE_CLOSEST_HIT
-
-#ifndef DISABLE_HGI_SHADER_STAGE_ANY_HIT
-[shader("anyhit")]void InstanceShadowAnyHitShader(
-        inout ShadowRayPayload rayPayload, in BuiltInTriangleIntersectionAttributes hit)
-{
-
-    // If the material is opaque, set the visibility to zero, accept the hit, and stop searching for
-    // hits, as the shadow ray is completely blocked. Doing this here is a performance optimization,
-    // as it avoids calling the full material initialization below, which can be expensive.
-    if (gGeometry.isOpaque())
-    {
-        rayPayload.visibility = BLACK;
-        AcceptHitAndEndSearch();
-    }
-
-    // Get the interpolated vertex data for the hit triangle, at the hit barycentric coordinates.
-    uint triangleIndex = PrimitiveIndex();
-    ShadingData shading =
-        computeShadingData(gGeometry, triangleIndex, hit.barycentrics, ObjectToWorld3x4());
-
-    // Get material buffer offset from instance data header.
-    int materialBufferOffset = instanceMaterialBufferOffset(gGeometry.getBufferOffset());
-    
-    // Retrieve the shader index for intersected surface material.
-    // This is stored in the material header in the global material byte buffer,
-    // at a position indicated by instance's gMaterialBufferOffset.
-    int shaderIndex = materialShaderIndex(materialBufferOffset);
-    
-    // Normal parameters generated by material's evaluate function (not used in shadow any hit shader.)
-    float3 materialNormal = shading.normal;
-    bool isGeneratedNormal = false;
-
-    // Initialize the material using the shader index with the externally defined evaluate function.
-    // This function will be generated at runtime and linked with the rest of the code.
-    Material material = evaluateMaterialForShader(shaderIndex, shading,
-                            materialBufferOffset, materialNormal, isGeneratedNormal);
-
-    // Compute opacity from material opacity and transmission.
-    float3 opacity =
-        material.opacity * (WHITE - material.transmission * material.transmissionColor);
-    rayPayload.visibility *= 1.0f - opacity;
-
-    // If the visibility is zero (opaque) at this point, accept this hit and stop searching for
-    // hits, as the shad ray is now completely blocked. Otherwise, ignore the hit so that
-    // visibility can continue to be accumulated from other any hit intersections.
-    if (isBlack(rayPayload.visibility))
-    {
-        AcceptHitAndEndSearch();
-    }
-    else
-    {
-        IgnoreHit();
-    }
-
-    // NOTE: The default behavior of accepting the hit while continuing to search for hits is not
-    // useful for shadow rays. It does not happen here, because of the intrinsic function calls
-    // above.
-
-}
-#endif // DISABLE_HGI_SHADER_STAGE_ANY_HIT
+#endif // DISABLE_HGI_SHADER_STAGE_INSTANCE_MISS

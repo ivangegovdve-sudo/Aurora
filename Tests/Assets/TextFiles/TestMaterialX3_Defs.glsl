@@ -1,17 +1,10 @@
 
-// Definition for implementation IM_texcoord_vector2_genglsl
+// Definition for implementation IM_texcoord_vector2_genslang
 //{
 //};
 
-// Definition for implementation IM_image_color3_genglsl
+// Definition for implementation IM_image_color3_genslang
 //{
-    // Included from lib/$fileTransformUv
-    vec2 mx_transform_uv(vec2 uv, vec2 uv_scale, vec2 uv_offset)
-    {
-        uv = uv * uv_scale + uv_offset;
-        return uv;
-    }
-    
     
     void mx_image_color3(sampler2D tex_sampler, int layer, vec3 defaultval, vec2 texcoord, int uaddressmode, int vaddressmode, int filtertype, int framerange, int frameoffset, int frameendaction, vec2 uv_scale, vec2 uv_offset, out vec3 result)
     {

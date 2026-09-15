@@ -38,6 +38,10 @@ HGIMaterial::HGIMaterial(HGIRenderer* pRenderer, const string& name, MaterialSha
 
 void HGIMaterial::update()
 {
+    // Run type-specific update function to set derived properties before uploading UBO.
+    if (definition()->updateFunction())
+        definition()->updateFunction()(*this);
+
     // Build a structure from values map into staging buffer.
     void* pStaging = _ubo->handle()->GetCPUStagingAddress();
     memcpy(pStaging, uniformBuffer().data(), uniformBuffer().size());

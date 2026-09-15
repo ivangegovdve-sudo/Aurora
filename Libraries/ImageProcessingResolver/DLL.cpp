@@ -27,8 +27,10 @@ BOOL APIENTRY DllMain(HMODULE /*hModule*/, DWORD ul_reason_for_call, LPVOID /*lp
 {
     switch (ul_reason_for_call)
     {
+    // NOTE: Do not register the resolver here. Resolver.cpp already handles registration
+    // via AR_DEFINE_RESOLVER. Double registration causes USD v26.08 to fail with duplicate
+    // type errors, and calling USD from DllMain runs under the loader lock.
     case DLL_PROCESS_ATTACH:
-        pxr::Ar_DefineResolver<ImageProcessingResolverPlugin>();
     case DLL_THREAD_ATTACH:
     case DLL_THREAD_DETACH:
     case DLL_PROCESS_DETACH:

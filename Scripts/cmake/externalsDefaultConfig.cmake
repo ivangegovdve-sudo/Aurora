@@ -137,6 +137,42 @@ if(WIN32)
 endif()
 # find_package_verbose(DXC)
 
+if(NOT APPLE)
+    if(NOT DEFINED NRD_ROOT)
+        set(NRD_ROOT "${EXTERNALS_ROOT}/NRD")
+    endif()
+    list(APPEND AURORA_DEPENDENCIES "${NRD_ROOT}")
+    # find_package_verbose(NRD)
+
+    if(NOT DEFINED NRI_ROOT)
+        set(NRI_ROOT "${EXTERNALS_ROOT}/NRI")
+    endif()
+    list(APPEND AURORA_DEPENDENCIES "${NRI_ROOT}")
+    # find_package_verbose(NRI)
+endif()
+
+if(ENABLE_UPSCALER)
+    if (NOT APPLE)
+        if(NOT DEFINED DLSS_ROOT)
+            set(DLSS_ROOT "${EXTERNALS_ROOT}/DLSS")
+        endif()
+        list(APPEND AURORA_DEPENDENCIES "${DLSS_ROOT}")
+
+        if(NOT DEFINED FSR_ROOT)
+            set(FSR_ROOT "${EXTERNALS_ROOT}/FSR")
+        endif()
+        list(APPEND AURORA_DEPENDENCIES "${FSR_ROOT}")
+    endif()
+endif()
+
+if(ENABLE_EXPERIMENTAL_MDL)
+    if(NOT DEFINED mdl_ROOT)
+        set(mdl_ROOT "${EXTERNALS_ROOT}/MDL")
+    endif()
+    list(APPEND AURORA_DEPENDENCIES "${mdl_ROOT}")
+endif()
+# find_package_verbose(mdl)
+
 # If you want to use you own build of certain external library, simply set <pkg>_ROOT
 # to guide find_package() to locate your own build. External libraries required directly
 # and indirectly by Aurora are:
@@ -156,6 +192,7 @@ endif()
 #     glfw3
 #     cxxopts
 #     GTest
+#     mdl
 
 # To debug finding the external libraries, uncomment the package you want to debug.
 # find_package_verbose(D3D12)
@@ -175,3 +212,4 @@ endif()
 # find_package_verbose(glfw3)
 # find_package_verbose(cxxopts)
 # find_package_verbose(GTest)
+# find_package_verbose(mdl)

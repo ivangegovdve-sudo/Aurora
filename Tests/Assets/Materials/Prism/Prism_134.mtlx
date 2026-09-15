@@ -1,0 +1,77 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <adsk:layered name="GraniteRed_shader" type="surfaceshader">
+    <input name="surface_albedo" type="color3" output="surface_albedo_map_output" nodegraph="GraniteRed_inputGraph" />
+    <input name="surface_roughness" type="float" output="surface_roughness_map_output" nodegraph="GraniteRed_inputGraph" />
+    <input name="surface_anisotropy" type="float" value="0" />
+    <input name="surface_rotation" type="float" value="0" />
+    <input name="layered_f0" type="float" value="0.045" />
+    <input name="layered_roughness" type="float" value="0.08" />
+    <input name="layered_anisotropy" type="float" value="0" />
+    <input name="layered_rotation" type="float" value="0" />
+    <input name="layered_diffuse" type="color3" output="layered_diffuse_map_output" nodegraph="GraniteRed_inputGraph" />
+    <input name="layered_bottom_f0" type="color3" value="1, 1, 1" colorspace="lin_rec709" />
+    <input name="layered_fraction" type="float" output="layered_fraction_map_output" nodegraph="GraniteRed_inputGraph" />
+    <input name="layered_fraction_invert" type="boolean" value="false" />
+    <input name="layered_normal" type="vector3" output="layered_normal_map_output" nodegraph="GraniteRed_inputGraph" />
+  </adsk:layered>
+  <surfacematerial name="GraniteRed" type="material" uiname="Prism-134">
+    <input name="surfaceshader" type="surfaceshader" nodename="GraniteRed_shader" />
+  </surfacematerial>
+  <nodegraph name="GraniteRed_inputGraph">
+    <adsk:bitmap name="surface_albedo_texture" type="color3">
+      <input name="file" type="filename" value="GraniteRed/granite_red_refl.jpg" colorspace="srgb_texture" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="24, 24" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="surface_albedo_map_output" type="color3" nodename="surface_albedo_texture" />
+    <adsk:bitmap name="surface_roughness_texture" type="float">
+      <input name="file" type="filename" value="GraniteRed/granite_red_rough.jpg" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="24, 24" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="surface_roughness_map_output" type="float" nodename="surface_roughness_texture" />
+    <adsk:bitmap name="layered_diffuse_texture" type="color3">
+      <input name="file" type="filename" value="GraniteRed/granite_red_color.jpg" colorspace="srgb_texture" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="24, 24" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="layered_diffuse_map_output" type="color3" nodename="layered_diffuse_texture" />
+    <adsk:bitmap name="layered_fraction_texture" type="float">
+      <input name="file" type="filename" value="GraniteRed/granite_red_specks_mask.jpg" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="24, 24" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="layered_fraction_map_output" type="float" nodename="layered_fraction_texture" />
+    <adsk:height_map name="layered_normal_texture" type="vector3">
+      <input name="file" type="filename" value="GraniteRed/granite_specks_bump.jpg" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="24, 24" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="depth" type="float" value="0.5" unit="inch" unittype="distance" />
+      <input name="rotation_angle" type="float" value="0" />
+    </adsk:height_map>
+    <output name="layered_normal_map_output" type="vector3" nodename="layered_normal_texture" />
+  </nodegraph>
+</materialx>

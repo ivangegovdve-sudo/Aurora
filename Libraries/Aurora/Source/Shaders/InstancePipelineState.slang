@@ -37,6 +37,8 @@ cbuffer gInstanceData : register(b0, space1)
     bool gHasTexCoords;        // Are there texture coordinates?
     bool gIsOpaque;            // Is the geometry opaque?
     int gInstanceBufferOffset; // Offset of instance's data within global instance byte buffer.
+    int gInstanceMaterialBufferOffset; // Offset of the instance's material data. Only usable for MDL code path.
+    int gInstanceMaterialArgumentsOffset; // Offset of the instance's material arguments data. Only usable for MDL code path.
 }
 
 // To hide DX-Vulkan differences, expose geometry access using functions.
@@ -94,15 +96,25 @@ int getInstanceBufferOffset()
 
 // Forward declare these functions on Vulkan GLSL.  As we need a platform-specific suffix file
 // containing the implementation of these functions.
+__target_intrinsic(glsl, "getIndicesForTriangle_0($0)")
 uint3 getIndicesForTriangle(int bufferLocation);
+__target_intrinsic(glsl, "getPositionForVertex_0($0)")
 float3 getPositionForVertex(int bufferLocation);
+__target_intrinsic(glsl, "getNormalForVertex_0($0)")
 float3 getNormalForVertex(int bufferLocation);
+__target_intrinsic(glsl, "getTangentForVertex_0($0)")
 float3 getTangentForVertex(int bufferLocation);
+__target_intrinsic(glsl, "getTexCoordForVertex_0($0)")
 float2 getTexCoordForVertex(int bufferLocation);
+__target_intrinsic(glsl, "instanceHasNormals_0()")
 bool instanceHasNormals();
+__target_intrinsic(glsl, "instanceHasTangents_0()")
 bool instanceHasTangents();
+__target_intrinsic(glsl, "instanceHasTexCoords_0()")
 bool instanceHasTexCoords();
+__target_intrinsic(glsl, "instanceIsOpaque_0()")
 bool instanceIsOpaque();
+__target_intrinsic(glsl, "getInstanceBufferOffset_0()")
 int getInstanceBufferOffset();
 
 #endif

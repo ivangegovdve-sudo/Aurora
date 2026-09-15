@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -772,12 +772,73 @@ float3 calculateGGXLightDirectionAndPDF(float3 tangent, float3 bitangent, float3
     return L;
 }
 
+// Probability of choosing the glossy (dielectric specular) lobe over the remaining
+// sheen/transmission/diffuse subtree when stochastically sampling one lobe per ray.
+//
+// The natural choice is specLuminance, the Fresnel-weighted specular contribution. NRD needs a
+// different one: at near-normal incidence on a low-roughness dielectric specLuminance is ~0.04, so
+// the glossy lobe feeds NRD's specular channel on only a few percent of frames and a 3x3
+// neighbourhood often contains no glossy sample at all. NRD documents a clamp to [1/4, 3/4] as a
+// precondition for HitDistanceReconstructionMode::AREA_3X3.
+//
+// Scoped to the denoising path, so the progressive path's converged image is unchanged; see
+// getNonGlossyLobeCompensation for why the denoised path converges to the same image regardless.
+//
+// NRD also asks for Bayer dithering rather than white noise here. That was implemented and removed:
+// the dither cost 0.9% of the converged error and sharing one lobe selector between the environment
+// MIS and the secondary bounce cost a further 3.5%, because an ordered dither correlates the choice
+// spatially and RELAX averages uncorrelated error away far better. Do not re-attempt without
+// measuring.
+float getGlossySelectionProbability(float specLuminance, float roughness)
+{
+    if (!gFrameData.isDenoisingAOVsEnabled)
+    {
+        return specLuminance;
+    }
+
+    // Boost toward a floor that rises as roughness falls, tapering out by a moderately glossy
+    // roughness where the natural probability is already reasonable. The span sits above the
+    // roughness at which NRD's own normal-ULP floor makes specular history rejection
+    // roughness-independent.
+    const float kMaxGlossyBoost           = 0.5f;
+    const float kGlossyBoostRoughnessSpan = 0.1f;
+    float glossyBoost =
+        lerp(kMaxGlossyBoost, 0.0f, saturate(roughness / kGlossyBoostRoughnessSpan));
+
+    return clamp(max(specLuminance, glossyBoost), 0.25f, 0.75f);
+}
+
+// Energy compensation for the lobes BELOW the glossy test (sheen, transmission, diffuse), given the
+// natural probability and the adjusted one getGlossySelectionProbability returned.
+//
+// Only the glossy branch divides by its selection probability; its siblings do not divide by
+// (1 - p), so their contribution is implicitly weighted by how often they are chosen. That implicit
+// weighting IS the attenuation under the specular layer, which is why the natural p is
+// specLuminance -- so raising p for NRD's benefit takes real energy out of the diffuse lobe (22% of
+// it at p = 1/4 against a typical dielectric's 0.04).
+//
+// Scaling the sibling subtree by (1 - natural) / (1 - adjusted) restores exactly the expectation the
+// natural probability produces, making the adjustment a change to WHICH lobe is sampled and nothing
+// else.
+float getNonGlossyLobeCompensation(float specLuminance, float adjustedProbability)
+{
+    // Nothing is adjusted off the denoising path, so return exactly 1.0. The ratio below would not:
+    // its divisor is floored, so a specLuminance within the floor of 1.0 (reachable at grazing
+    // incidence) would scale the subtree even where the two probabilities are equal.
+    if (!gFrameData.isDenoisingAOVsEnabled)
+    {
+        return 1.0f;
+    }
+
+    return (1.0f - specLuminance) / max(1.0f - adjustedProbability, 1e-4f);
+}
+
 // Samples the material using simple cosine-weighted hemisphere sampling.
 // NOTE: This will provide suboptimal results, and is only intended for debugging.
 BSDF_AND_COSINE sampleMaterialAllLobes(Material material, ShadingData shading, float3 Vw,
     float2 random, out float3 Lw, out float pdf, out int lobeID)
 {
-    lobeID = 1;
+    lobeID = DIFFUSE_LOBE;
     // Sample a cosine-weighted direction from a hemisphere above the normal. If the view direction
     // is not in the same hemisphere as the normal, flip the light direction to allow proper shading
     // of the backface.
@@ -811,7 +872,7 @@ BSDF_AND_COSINE evaluateMaterialAndPDF(Material material, ShadingData shading,
 
     // Default values (avoid compile errors if lobes disabled).
     pdf    = 0.0;
-    lobeID = -1;
+    lobeID = NO_SECONDARY_RAY;
 
     // Roughness influenced by coat.
     float coat_affect_roughness_factor =
@@ -924,11 +985,16 @@ BSDF_AND_COSINE evaluateMaterialAndPDF(Material material, ShadingData shading,
             // Compute luminance specular Fresnel component for BSDF.
             float specLuminance = luminance(F * material.specular * material.specularColor);
 
+            // Adjusted for NRD on the denoising path only; see getGlossySelectionProbability. Must
+            // match sampleMaterial's probability exactly, or MIS is biased.
+            float glossySelectionProb =
+                getGlossySelectionProbability(specLuminance, material.specularRoughness);
+
             // Sample glossy lobe.
-            if (random.x < specLuminance)
+            if (random.x < glossySelectionProb)
             {
                 // Remap the random variable to 0-1 within metal lobe.
-                random.x = remapPass(random.x, specLuminance);
+                random.x = remapPass(random.x, glossySelectionProb);
 
                 // Compte PDF from provided light direction..
                 pdf = calculateGGXPDF(V, specAlpha, random, L);
@@ -942,7 +1008,7 @@ BSDF_AND_COSINE evaluateMaterialAndPDF(Material material, ShadingData shading,
                 // needed for this lobe because the result is inherently scaled by a similar amount
                 // above, i.e. F * specular * specularColor. Otherwise the lobe contribution will be
                 // too small.
-                result /= specLuminance;
+                result /= glossySelectionProb;
 
                 // Set lobe ID.
                 lobeID = GLOSSY_LOBE;
@@ -950,7 +1016,7 @@ BSDF_AND_COSINE evaluateMaterialAndPDF(Material material, ShadingData shading,
             else
             {
                 // Remap the random variable to 0-1 within metal lobe.
-                random.x = remapFail(random.x, specLuminance);
+                random.x = remapFail(random.x, glossySelectionProb);
 
                 // Alpha is just roughness clamped to epsilon-1.0 range (to avoid NaN)
                 float sheenAlpha = clamp(material.sheenRoughness, M_FLOAT_EPS, 1.0);
@@ -1003,6 +1069,10 @@ BSDF_AND_COSINE evaluateMaterialAndPDF(Material material, ShadingData shading,
                     // Set lobe ID.
                     lobeID = DIFFUSE_LOBE;
                 }
+
+                // Restore the energy the NRD lobe-probability adjustment would otherwise
+                // remove from this subtree; exactly 1.0 off the denoising path.
+                result *= getNonGlossyLobeCompensation(specLuminance, glossySelectionProb);
             }
         }
 
@@ -1040,7 +1110,7 @@ BSDF_AND_COSINE sampleMaterial(Material material, ShadingData shading, float3 Vw
     // Default values (avoid compile errors if lobes disabled).
     Lw     = float3(1, 0, 0);
     pdf    = 0.0;
-    lobeID = -1;
+    lobeID = NO_SECONDARY_RAY;
 
     // Roughness influenced by coat.
     float coat_affect_roughness_factor =
@@ -1158,11 +1228,16 @@ BSDF_AND_COSINE sampleMaterial(Material material, ShadingData shading, float3 Vw
             // Compute luminance specular Fresnel component for BSDF.
             float specLuminance = luminance(F * material.specular * material.specularColor);
 
+            // Adjusted for NRD on the denoising path only; see getGlossySelectionProbability. Must
+            // match evaluateMaterialAndPDF's probability exactly, or MIS is biased.
+            float glossySelectionProb =
+                getGlossySelectionProbability(specLuminance, material.specularRoughness);
+
             // Sample glossy lobe.
-            if (random.x < specLuminance)
+            if (random.x < glossySelectionProb)
             {
                 // Remap the random variable to 0-1 within metal lobe.
-                random.x = remapPass(random.x, specLuminance);
+                random.x = remapPass(random.x, glossySelectionProb);
 
                 // Generate light direction and half vector.
                 L = calculateGGXLightDirectionAndPDF(X, Y, N, V, specAlpha, random, Lw, pdf);
@@ -1176,7 +1251,7 @@ BSDF_AND_COSINE sampleMaterial(Material material, ShadingData shading, float3 Vw
                 // needed for this lobe because the result is inherently scaled by a similar amount
                 // above, i.e. F * specular * specularColor. Otherwise the lobe contribution will be
                 // too small.
-                result /= specLuminance;
+                result /= glossySelectionProb;
 
                 // Set lobe ID.
                 lobeID = GLOSSY_LOBE;
@@ -1184,7 +1259,7 @@ BSDF_AND_COSINE sampleMaterial(Material material, ShadingData shading, float3 Vw
             else
             {
                 // Remap the random variable to 0-1 within metal lobe.
-                random.x = remapFail(random.x, specLuminance);
+                random.x = remapFail(random.x, glossySelectionProb);
 
                 // Alpha is just roughness clamped to epsilon-1.0 range (to avoid NaN)
                 float sheenAlpha = clamp(material.sheenRoughness, M_FLOAT_EPS, 1.0);
@@ -1278,6 +1353,10 @@ BSDF_AND_COSINE sampleMaterial(Material material, ShadingData shading, float3 Vw
                         lobeID = DIFFUSE_LOBE;
                     }
                 }
+
+                // Restore the energy the NRD lobe-probability adjustment would otherwise
+                // remove from this subtree; exactly 1.0 off the denoising path.
+                result *= getNonGlossyLobeCompensation(specLuminance, glossySelectionProb);
             }
         }
 

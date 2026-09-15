@@ -61,8 +61,27 @@ HGIRenderBuffer::HGIRenderBuffer(
         _pRenderer->hgi()->CreateTexture(rtStorageTexDesc), _pRenderer->hgi());
 }
 
-void HGIRenderBuffer::resize(uint32_t /*width*/, uint32_t /*height*/) {
-    // TODO: Implement me!
+void HGIRenderBuffer::resize(uint32_t width, uint32_t height) {
+    if (width == _width && height == _height)
+        return;
+
+    _width  = width;
+    _height = height;
+
+    // Recreate the storage texture at the new size.
+    HgiTextureDesc rtStorageTexDesc;
+    rtStorageTexDesc.debugName  = "RT Storage Texture";
+    rtStorageTexDesc.format     = _format;
+    rtStorageTexDesc.dimensions = GfVec3i(width, height, 1);
+    rtStorageTexDesc.layerCount = 1;
+    rtStorageTexDesc.mipLevels  = 1;
+    rtStorageTexDesc.usage      = HgiTextureUsageBitsShaderRead | HgiTextureUsageBitsShaderWrite;
+
+    _storageTex = HgiTextureHandleWrapper::create(
+        _pRenderer->hgi()->CreateTexture(rtStorageTexDesc), _pRenderer->hgi());
+
+    // The readback staging buffer is sized for the old dimensions.
+    _mappedBuffer.clear();
 }
 
 const void* HGIRenderBuffer::data(size_t& stride, bool /*removePadding*/)

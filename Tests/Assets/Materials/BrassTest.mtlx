@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<materialx version="1.37">
+  <standard_surface name="Tiled_Brass_SR_brass1" type="surfaceshader" version="1.0.1" xpos="315" ypos="34">
+    <input name="base" type="float" value="1" uivisible="true" />
+    <input name="base_color" type="color3" nodename="image_color" uivisible="true" />
+    <input name="metalness" type="float" value="1" uivisible="true" />
+    <input name="specular" type="float" value="0" uivisible="true" />
+    <input name="specular_roughness" type="float" nodename="image_roughness" uivisible="true" />
+    <input name="coat" type="float" value="1" uivisible="true" />
+  </standard_surface>
+  <surfacematerial name="Tiled_Brass" type="material" xpos="620" ypos="10">
+    <input name="surfaceshader" type="surfaceshader" nodename="Tiled_Brass_SR_brass1" uivisible="true" />
+    <input name="displacementshader" type="displacementshader" value="" uivisible="true" />
+  </surfacematerial>
+  <tiledimage name="image_color" type="color3" xpos="10" ypos="130">
+    <parameter name="file" type="filename" value="brass_color.jpg" uivisible="true" uniform="true" />
+    <parameter name="frameoffset" type="integer" value="0" uivisible="true" uniform="true" />
+  </tiledimage>
+  <tiledimage name="image_roughness" type="float" xpos="10" ypos="564">
+    <parameter name="file" type="filename" value="brass_roughness.jpg" uivisible="true" uniform="true" />
+    <parameter name="default" type="float" value="0" uivisible="true" uniform="true" />
+    <parameter name="frameoffset" type="integer" value="0" uivisible="true" uniform="true" />
+  </tiledimage>
+</materialx>

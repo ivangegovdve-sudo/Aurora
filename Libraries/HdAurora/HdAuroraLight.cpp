@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
 // limitations under the License.
 #include "pch.h"
 
+#include "HdAuroraAssetPath.h"
 #include "HdAuroraImageCache.h"
 #include "HdAuroraLight.h"
 #include "HdAuroraRenderDelegate.h"
@@ -47,7 +48,7 @@ void HdAuroraDomeLight::Sync(
 
     // Get the environment image file path, if any.
     VtValue envFilePathVal = delegate->GetLightParamValue(id, pxr::HdLightTokens->textureFile);
-    auto envFilePath       = envFilePathVal.Get<pxr::SdfAssetPath>().GetAssetPath();
+    auto envFilePath       = GetUsableAssetPath(envFilePathVal);
 
     // If the environment image file path has changed, apply the new value.
     if (_environmentImageFilePath != envFilePath)
@@ -136,7 +137,7 @@ void HdAuroraDistantLight::Sync(
         if (angleDegVal.IsHolding<float>())
         {
             // Calculate solid angle area to normalize intensity.
-            float angleRadians = angleDegVal.Get<float>() / 180.0f * static_cast<float>(M_PI);
+            float angleRadians = angleDegVal.UncheckedGet<float>() / 180.0f * static_cast<float>(M_PI);
             float solidAngleSteradians =
                 2.0f * static_cast<float>(M_PI) * (1.0f - cos(angleRadians / 2.0f));
             area = solidAngleSteradians;

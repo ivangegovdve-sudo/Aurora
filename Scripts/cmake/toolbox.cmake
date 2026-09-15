@@ -53,11 +53,23 @@ macro(minify_shaders header shader_folder shaders)
     else()
         add_custom_command(
             OUTPUT ${header}
-            COMMAND  ${CMAKE_COMMAND} -E env "DXC_LIBRARY_DIR=${DXC_LIBRARY_DIR}" ${Python3_EXECUTABLE} ${SCRIPTS_DIR}/minifyShadersFolder.py ${shader_folder} ${header} ${Slang_COMPILER}
+            COMMAND  ${CMAKE_COMMAND} -E env "DXC_LIBRARY_DIR=${DXC_LIBRARY_DIR}" "ENABLE_NRD=${ENABLE_NRD}" "NRD_SHADERS_INCLUDE_DIR=${NRD_SHADERS_INCLUDE_DIR}" "NRD_SHADERS_SOURCE_DIR=${NRD_SHADERS_SOURCE_DIR}" ${Python3_EXECUTABLE} ${SCRIPTS_DIR}/minifyShadersFolder.py ${shader_folder} ${header} ${Slang_COMPILER}
             COMMENT "Minifying path tracing shaders to ${header}"
             DEPENDS ${shaders}
         )
     endif()
+endmacro()
+
+# Macro to setup a custom command that embeds shader files verbatim into a C++ header.
+macro(embed_shader_files header namespace files)
+    add_custom_command(
+        OUTPUT ${header}
+        COMMAND ${Python3_EXECUTABLE} ${SCRIPTS_DIR}/embedShaderFiles.py ${header} ${namespace} ${files}
+        COMMENT "Embedding ${namespace} shader sources into ${header}"
+        DEPENDS ${files} ${SCRIPTS_DIR}/embedShaderFiles.py
+    )
+    # Generated, and not a shader VS should try to compile.
+    set_source_files_properties(${header} PROPERTIES GENERATED "true" VS_TOOL_OVERRIDE "NONE")
 endmacro()
 
 macro(minify_metal_lib header shader_folder shaders)

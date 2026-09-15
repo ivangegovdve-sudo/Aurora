@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <adsk:metal name="StainlessDiamondPlateTreadBrite_shader" type="surfaceshader">
+    <input name="metal_f0" type="color3" value="0.797738, 0.797738, 0.797738" colorspace="rec709_display" />
+    <input name="surface_albedo" type="color3" value="1, 1, 1" colorspace="rec709_display" />
+    <input name="surface_roughness" type="float" output="surface_roughness_map_output" nodegraph="StainlessDiamondPlateTreadBrite_inputGraph" />
+    <input name="surface_anisotropy" type="float" value="0" />
+    <input name="surface_rotation" type="float" value="0" />
+    <input name="surface_normal" type="vector3" output="surface_normal_map_output" nodegraph="StainlessDiamondPlateTreadBrite_inputGraph" />
+  </adsk:metal>
+  <surfacematerial name="StainlessDiamondPlateTreadBrite" type="material" uiname="Prism-066">
+    <input name="surfaceshader" type="surfaceshader" nodename="StainlessDiamondPlateTreadBrite_shader" />
+  </surfacematerial>
+  <nodegraph name="StainlessDiamondPlateTreadBrite_inputGraph">
+    <adsk:bitmap name="surface_roughness_texture" type="float">
+      <input name="file" type="filename" value="StainlessDiamondPlateTreadBrite/texture_diamond_plate_1_rough.png" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="2, 2" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="surface_roughness_map_output" type="float" nodename="surface_roughness_texture" />
+    <adsk:normal_map name="surface_normal_texture" type="vector3">
+      <input name="file" type="filename" value="StainlessDiamondPlateTreadBrite/texture_diamond_plate_1_norm.png" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="2, 2" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="normal_scale" type="float" value="1" />
+    </adsk:normal_map>
+    <output name="surface_normal_map_output" type="vector3" nodename="surface_normal_texture" />
+  </nodegraph>
+</materialx>

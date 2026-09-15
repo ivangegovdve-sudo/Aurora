@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@
 #include <MaterialXFormat/Util.h>
 #include <MaterialXFormat/XmlIo.h>
 
+#include "HdAuroraAssetPath.h"
 #include "HdAuroraImageCache.h"
 #include "HdAuroraMesh.h"
 #include "HdAuroraRenderDelegate.h"
@@ -67,9 +68,9 @@ static const string nodeGraphBindingTemplate = R"(
 static const string nodeGraphImageTemplate = R"(
   <nodegraph name="NG%s">
     <image name="%s" type="%s">
-      <parameter name="file" type="filename" value="" />
-      <parameter name="uaddressmode" type="string" value="periodic" />
-      <parameter name="vaddressmode" type="string" value="periodic" />
+      <input name="file" type="filename" value="" />
+      <input name="uaddressmode" type="string" value="periodic" />
+      <input name="vaddressmode" type="string" value="periodic" />
     </image>
     <output name="out1" type="%s" nodename="%s" />
   </nodegraph>)";
@@ -77,9 +78,9 @@ static const string nodeGraphImageTemplate = R"(
 static const string nodeGraphNormalMapTemplate = R"(
   <nodegraph name="NG%s">
     <image name="%s" type="vector3">
-      <parameter name="file" type="filename" value="" />
-      <parameter name="uaddressmode" type="string" value="periodic" />
-      <parameter name="vaddressmode" type="string" value="periodic" />
+      <input name="file" type="filename" value="" />
+      <input name="uaddressmode" type="string" value="periodic" />
+      <input name="vaddressmode" type="string" value="periodic" />
     </image>
     <normalmap name="%s_image" type="vector3">
       <input name="in" type="vector3" nodename="%s" />
@@ -335,7 +336,10 @@ void HdAuroraMaterial::ProcessHDMaterial(HdSceneDelegate* delegate)
         Aurora::Properties materialProperties;
 
 #if HD_AURORA_SEPARATE_MTLX_DOC
-        if (!hdMaterialXDocument.empty())
+        // Inline documents only. Parsing kMaterialXPath string (a file path) as XML would
+        // mistakenly replace it with an empty serialized document.
+        if (hdMaterialXType == Aurora::Names::MaterialTypes::kMaterialX &&
+            !hdMaterialXDocument.empty())
         {
             // Separate hdMaterialXDocument into default doc and name-value pair
             hdMaterialXDocument =
@@ -361,7 +365,7 @@ void HdAuroraMaterial::ProcessHDMaterial(HdSceneDelegate* delegate)
         // If no material network read from the Hydra material parameters.
         // These parameters  are set as overrides over what is specified in the
         // MaterialX document.
-        std::vector<std::pair<std::string, std::string>> knownMapParameters = {
+        const std::vector<std::pair<std::string, std::string>> knownMapParameters = {
             { "base_color_map", "base_color_image" },
             { "roughness_map", "specular_roughness_image" }
             //,{ "coat_map", "coat_color_image" }
@@ -370,23 +374,26 @@ void HdAuroraMaterial::ProcessHDMaterial(HdSceneDelegate* delegate)
             { "bump_map", "normal_image" }
             //,{ "displacement_map", "displacement_image" }
         };
-        for (auto inputName : knownMapParameters)
+        for (const auto& inputName : knownMapParameters)
         {
             VtValue texFilenameVal = delegate->Get(id, pxr::TfToken(inputName.first));
-            auto texFilenamePath   = texFilenameVal.Get<pxr::SdfAssetPath>();
-            string texFilename     = texFilenamePath.GetAssetPath();
-            bool forceLinear       = inputName.second.compare("normal_image") == 0;
-
-            if (texFilename.size() > 0)
+            if (texFilenameVal.IsHolding<pxr::SdfAssetPath>())
             {
-                Aurora::Path auroraImagePath =
-                    _owner->imageCache().acquireImage(texFilename, false, forceLinear);
+                auto texFilenamePath   = texFilenameVal.UncheckedGet<pxr::SdfAssetPath>();
+                string texFilename     = GetUsableAssetPath(texFilenamePath);
+                bool forceLinear       = inputName.second.compare("normal_image") == 0;
 
-                materialProperties[inputName.second] = auroraImagePath;
+                if (texFilename.size() > 0)
+                {
+                    Aurora::Path auroraImagePath =
+                        _owner->imageCache().acquireImage(texFilename, false, forceLinear);
+
+                    materialProperties[inputName.second] = auroraImagePath;
+                }
             }
         }
 
-        std::vector<std::pair<std::string, std::string>> knownFloatParameters = {
+        const std::vector<std::pair<std::string, std::string>> knownFloatParameters = {
             { "roughness", "specular_roughness" }, { "base_weight", "base" },
             { "reflectivity", "specular" }, { "metalness", "metalness" },
             { "anisotrophy", "specular_anisotropy" }, { "anisoangle", "specular_rotation" },
@@ -395,12 +402,12 @@ void HdAuroraMaterial::ProcessHDMaterial(HdSceneDelegate* delegate)
             { "coating", "coat" }, { "coat_roughness", "coat_roughness" },
             { "coat_ior", "coat_IOR" }
         };
-        for (auto inputName : knownFloatParameters)
+        for (const auto& inputName : knownFloatParameters)
         {
             pxr::VtValue val = delegate->Get(id, pxr::TfToken(inputName.first));
             if (val.IsHolding<float>())
             {
-                float fVal                           = val.Get<float>();
+                float fVal                           = val.UncheckedGet<float>();
                 materialProperties[inputName.second] = fVal;
             }
         }
@@ -415,7 +422,7 @@ void HdAuroraMaterial::ProcessHDMaterial(HdSceneDelegate* delegate)
             pxr::VtValue val = delegate->Get(id, pxr::TfToken(inputName.first));
             if (val.IsHolding<GfVec4f>())
             {
-                GfVec4f color                        = val.Get<GfVec4f>();
+                GfVec4f color                        = val.UncheckedGet<GfVec4f>();
                 materialProperties[inputName.second] = GfVec4ToGLMVec3(&color);
             }
         }
@@ -443,7 +450,7 @@ bool HdAuroraMaterial::GetHDMaterialXDocument(
     if (!materialXFilePath.IsEmpty())
     {
         // Set Aurora material type and document for materialX path.
-        materialDocument = materialXFilePath.Get<pxr::SdfAssetPath>().GetAssetPath();
+        materialDocument = GetUsableAssetPath(materialXFilePath);
         materialType     = Aurora::Names::MaterialTypes::kMaterialXPath;
 
         isMaterialX = true;
@@ -596,7 +603,7 @@ bool HdAuroraMaterial::BuildMaterialXDocumentFromHDNetwork(
                         paramIter->second.IsHolding<SdfAssetPath>())
                     {
                         // Get the texture path from the node.
-                        SdfAssetPath texturePath = paramIter->second.Get<SdfAssetPath>();
+                        SdfAssetPath texturePath = paramIter->second.UncheckedGet<SdfAssetPath>();
                         string filename          = texturePath.GetResolvedPath();
 
                         // Keep track of unique materials and node graphs.
@@ -647,7 +654,7 @@ bool HdAuroraMaterial::BuildMaterialXDocumentFromHDNetwork(
     VtValue mapOpacityToTransmissionVal =
         _owner->GetRenderSetting(HdAuroraTokens::kMapMaterialOpacityToTransmission);
     bool mapOpacityToTransmission = mapOpacityToTransmissionVal.IsHolding<bool>()
-        ? mapOpacityToTransmissionVal.Get<bool>()
+        ? mapOpacityToTransmissionVal.UncheckedGet<bool>()
         : true;
 
     // Setup the opacity parameter to map UsdPreviewSurface opacity to Standard Surface
@@ -796,8 +803,8 @@ bool HdAuroraMaterial::ApplyHDNetwork(const ProcessedMaterialNetwork& network)
                         paramIter->second.IsHolding<SdfAssetPath>())
                     {
                         // Get the texture path from the node.
-                        SdfAssetPath texturePath = paramIter->second.Get<SdfAssetPath>();
-                        string filename          = texturePath.GetResolvedPath();
+                        SdfAssetPath texturePath = paramIter->second.UncheckedGet<SdfAssetPath>();
+                        string filename          = GetUsableAssetPath(texturePath);
 
                         // Set the Aurora image property
                         string paramName = parameterInfo.auroraName + "_image";
@@ -817,7 +824,7 @@ bool HdAuroraMaterial::ApplyHDNetwork(const ProcessedMaterialNetwork& network)
     VtValue mapOpacityToTransmissionVal =
         _owner->GetRenderSetting(HdAuroraTokens::kMapMaterialOpacityToTransmission);
     bool mapOpacityToTransmission = mapOpacityToTransmissionVal.IsHolding<bool>()
-        ? mapOpacityToTransmissionVal.Get<bool>()
+        ? mapOpacityToTransmissionVal.UncheckedGet<bool>()
         : true;
 
     // Setup the opacity parameter to map UsdPreviewSurface opacity to Standard Surface

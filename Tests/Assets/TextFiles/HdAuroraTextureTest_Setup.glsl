@@ -1,33 +1,33 @@
-void setupMaterial_c4e7dcaed703027e(
-	Material_c4e7dcaed703027e material,
+void setupMaterial_83c3180879ed5898(
+	Material_83c3180879ed5898 material,
 	sampler2D base_color_image_image_parameter,
 	sampler2D specular_roughness_image_image_parameter,
-	out vec3 base_color,
+	out float3 base_color,
 	out float metalness,
 	out float specular_roughness,
 	out float specular_IOR,
 	out float transmission,
 	out float coat,
 	out float coat_roughness,
-	out vec3 emission_color)
+	out float3 emission_color)
 {
 	//Temp input variables for base_color_image 
-	vec3 nodeOutTmp_base_color_image_out; //Temp output variable for out 
-	sampler2D nodeTmp_base_color_image_file; //Temp input variable for file 
+	float3 nodeOutTmp_base_color_image_out; //Temp output variable for out 
+	SamplerTexture2D nodeTmp_base_color_image_file; //Temp input variable for file 
 	int nodeTmp_base_color_image_layer; //Temp input variable for layer 
-	vec3 nodeTmp_base_color_image_default; //Temp input variable for default 
-	vec2 nodeTmp_base_color_image_texcoord; //Temp input variable for texcoord 
+	float3 nodeTmp_base_color_image_default; //Temp input variable for default 
+	float2 nodeTmp_base_color_image_texcoord; //Temp input variable for texcoord 
 	int nodeTmp_base_color_image_uaddressmode; //Temp input variable for uaddressmode 
 	int nodeTmp_base_color_image_vaddressmode; //Temp input variable for vaddressmode 
 	int nodeTmp_base_color_image_filtertype; //Temp input variable for filtertype 
 	int nodeTmp_base_color_image_framerange; //Temp input variable for framerange 
 	int nodeTmp_base_color_image_frameoffset; //Temp input variable for frameoffset 
 	int nodeTmp_base_color_image_frameendaction; //Temp input variable for frameendaction 
-	vec2 nodeTmp_base_color_image_uv_scale; //Temp input variable for uv_scale 
-	vec2 nodeTmp_base_color_image_uv_offset; //Temp input variable for uv_offset 
+	float2 nodeTmp_base_color_image_uv_scale; //Temp input variable for uv_scale 
+	float2 nodeTmp_base_color_image_uv_offset; //Temp input variable for uv_offset 
 	// Graph input NG1/base_color_image/file
 	//{
-sampler2D base_color_image_file1//};
+SamplerTexture2D base_color_image_file1//};
  = base_color_image_image_parameter;
 	nodeTmp_base_color_image_file = base_color_image_file1;// Output connection
 	// Graph input NG1/base_color_image/layer
@@ -37,21 +37,21 @@ int base_color_image_layer1 = 0//};
 	nodeTmp_base_color_image_layer = base_color_image_layer1;// Output connection
 	// Graph input NG1/base_color_image/default
 	//{
-vec3 base_color_image_default1 = vec3(0, 0, 0)//};
+float3 base_color_image_default1 = float3(0, 0, 0)//};
 ;
 	nodeTmp_base_color_image_default = base_color_image_default1;// Output connection
 	//Temp input variables for geomprop_UV0 
-	vec2 nodeOutTmp_geomprop_UV0_out; //Temp output variable for out 
+	float2 nodeOutTmp_geomprop_UV0_out; //Temp output variable for out 
 	int nodeTmp_geomprop_UV0_index; //Temp input variable for index 
 	// Graph input UV0
 	//{
 int geomprop_UV0_index1 = 0//};
 ;
 	nodeTmp_geomprop_UV0_index = geomprop_UV0_index1;// Output connection
-	// Graph input function call texcoord (See definition IM_texcoord_vector2_genglsl)
+	// Graph input function call texcoord (See definition IM_texcoord_vector2_genslang)
 {
 	//{
-    vec2 geomprop_UV0_out1 = vertexData.texCoord.xy;
+    float2 geomprop_UV0_out1 = vertexData.texCoord.xy;
 //};
 	nodeOutTmp_geomprop_UV0_out = geomprop_UV0_out1;// Output connection
 	nodeTmp_base_color_image_texcoord = geomprop_UV0_out1;// Output connection
@@ -88,18 +88,18 @@ int base_color_image_frameendaction1 = 0//};
 	nodeTmp_base_color_image_frameendaction = base_color_image_frameendaction1;// Output connection
 	// Graph input 
 	//{
-vec2 base_color_image_uv_scale1 = vec2(1, 1)//};
+float2 base_color_image_uv_scale1 = float2(1, 1)//};
 ;
 	nodeTmp_base_color_image_uv_scale = base_color_image_uv_scale1;// Output connection
 	// Graph input 
 	//{
-vec2 base_color_image_uv_offset1 = vec2(0, 0)//};
+float2 base_color_image_uv_offset1 = float2(0, 0)//};
 ;
 	nodeTmp_base_color_image_uv_offset = base_color_image_uv_offset1;// Output connection
-	// Graph input function call base_color (See definition IM_image_color3_genglsl)
+	// Graph input function call base_color (See definition IM_image_color3_genslang)
 {
 	//{
-    vec3 base_color_image_out = vec3(0.0);
+    float3 base_color_image_out = float3(0.0);
     mx_image_color3(nodeTmp_base_color_image_file, nodeTmp_base_color_image_layer, nodeTmp_base_color_image_default, nodeTmp_base_color_image_texcoord, nodeTmp_base_color_image_uaddressmode, nodeTmp_base_color_image_vaddressmode, nodeTmp_base_color_image_filtertype, nodeTmp_base_color_image_framerange, nodeTmp_base_color_image_frameoffset, nodeTmp_base_color_image_frameendaction, nodeTmp_base_color_image_uv_scale, nodeTmp_base_color_image_uv_offset, base_color_image_out);
 //};
 	nodeOutTmp_base_color_image_out = base_color_image_out;// Output connection
@@ -108,25 +108,25 @@ vec2 base_color_image_uv_offset1 = vec2(0, 0)//};
 	// Graph input SS_Material/metalness
 	//{
 float SS_Material_metalness//};
- = material.metalness;
+ = material.SS_Material_metalness;
 	metalness = SS_Material_metalness;// Output connection
 	//Temp input variables for specular_roughness_image 
 	float nodeOutTmp_specular_roughness_image_out; //Temp output variable for out 
-	sampler2D nodeTmp_specular_roughness_image_file; //Temp input variable for file 
+	SamplerTexture2D nodeTmp_specular_roughness_image_file; //Temp input variable for file 
 	int nodeTmp_specular_roughness_image_layer; //Temp input variable for layer 
 	float nodeTmp_specular_roughness_image_default; //Temp input variable for default 
-	vec2 nodeTmp_specular_roughness_image_texcoord; //Temp input variable for texcoord 
+	float2 nodeTmp_specular_roughness_image_texcoord; //Temp input variable for texcoord 
 	int nodeTmp_specular_roughness_image_uaddressmode; //Temp input variable for uaddressmode 
 	int nodeTmp_specular_roughness_image_vaddressmode; //Temp input variable for vaddressmode 
 	int nodeTmp_specular_roughness_image_filtertype; //Temp input variable for filtertype 
 	int nodeTmp_specular_roughness_image_framerange; //Temp input variable for framerange 
 	int nodeTmp_specular_roughness_image_frameoffset; //Temp input variable for frameoffset 
 	int nodeTmp_specular_roughness_image_frameendaction; //Temp input variable for frameendaction 
-	vec2 nodeTmp_specular_roughness_image_uv_scale; //Temp input variable for uv_scale 
-	vec2 nodeTmp_specular_roughness_image_uv_offset; //Temp input variable for uv_offset 
+	float2 nodeTmp_specular_roughness_image_uv_scale; //Temp input variable for uv_scale 
+	float2 nodeTmp_specular_roughness_image_uv_offset; //Temp input variable for uv_offset 
 	// Graph input NG2/specular_roughness_image/file
 	//{
-sampler2D specular_roughness_image_file1//};
+SamplerTexture2D specular_roughness_image_file1//};
  = specular_roughness_image_image_parameter;
 	nodeTmp_specular_roughness_image_file = specular_roughness_image_file1;// Output connection
 	// Graph input NG2/specular_roughness_image/layer
@@ -172,15 +172,15 @@ int specular_roughness_image_frameendaction1 = 0//};
 	nodeTmp_specular_roughness_image_frameendaction = specular_roughness_image_frameendaction1;// Output connection
 	// Graph input 
 	//{
-vec2 specular_roughness_image_uv_scale1 = vec2(1, 1)//};
+float2 specular_roughness_image_uv_scale1 = float2(1, 1)//};
 ;
 	nodeTmp_specular_roughness_image_uv_scale = specular_roughness_image_uv_scale1;// Output connection
 	// Graph input 
 	//{
-vec2 specular_roughness_image_uv_offset1 = vec2(0, 0)//};
+float2 specular_roughness_image_uv_offset1 = float2(0, 0)//};
 ;
 	nodeTmp_specular_roughness_image_uv_offset = specular_roughness_image_uv_offset1;// Output connection
-	// Graph input function call specular_roughness (See definition IM_image_float_genglsl)
+	// Graph input function call specular_roughness (See definition IM_image_float_genslang)
 {
 	//{
     float specular_roughness_image_out = 0.0;
@@ -192,26 +192,26 @@ vec2 specular_roughness_image_uv_offset1 = vec2(0, 0)//};
 	// Graph input SS_Material/specular_IOR
 	//{
 float SS_Material_specular_IOR//};
- = material.specular_IOR;
+ = material.SS_Material_specular_IOR;
 	specular_IOR = SS_Material_specular_IOR;// Output connection
 	// Graph input SS_Material/transmission
 	//{
 float SS_Material_transmission//};
- = material.transmission;
+ = material.SS_Material_transmission;
 	transmission = SS_Material_transmission;// Output connection
 	// Graph input SS_Material/coat
 	//{
 float SS_Material_coat//};
- = material.coat;
+ = material.SS_Material_coat;
 	coat = SS_Material_coat;// Output connection
 	// Graph input SS_Material/coat_roughness
 	//{
 float SS_Material_coat_roughness//};
- = material.coat_roughness;
+ = material.SS_Material_coat_roughness;
 	coat_roughness = SS_Material_coat_roughness;// Output connection
 	// Graph input SS_Material/emission_color
 	//{
-vec3 SS_Material_emission_color//};
- = material.emission_color;
+float3 SS_Material_emission_color//};
+ = material.SS_Material_emission_color;
 	emission_color = SS_Material_emission_color;// Output connection
 }

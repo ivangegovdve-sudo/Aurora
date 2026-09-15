@@ -15,14 +15,19 @@
 #define __GLOBALS_H__
 
 // Math constants.
+#ifndef M_PI
 #define M_PI 3.1415926535897932384626433832795f
+#endif
 #define M_PI_INV 1.0 / 3.1415926535897932384626433832795
+#ifndef M_FLOAT_EPS
 #define M_FLOAT_EPS 0.000001f
+#endif
 #define M_RAY_TMIN 0.01f
 
 // Miss shader indices.
-#define kMissNull 0       // for a disabled miss shader (no effect)
-#define kMissShadow 1     // for shadow rays, forced to opaque
+#define kMissNull 0     // for a disabled miss shader (no effect)
+#define kMissInstance 1 // for instance rays
+#define kMissShadow 2   // for shadow rays, forced to opaque
 
 // Black and white constant values, which can also be used as a float3.
 #define BLACK 0.0f

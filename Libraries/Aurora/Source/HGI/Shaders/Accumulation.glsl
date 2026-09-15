@@ -1,10 +1,5 @@
-// Sample data UBO.
-// NOTE should be passed as push constants, but this is currently broken in HGI.
-layout(binding = 3) layout(std140) uniform SampleData
-{
-    int sampleIndex;
-    int seedOffset;
-} gSampleData;
+// The sample data uniform block is declared through the Hgi shader function API
+// (see HGIRenderer::createResources).
 
 // Get texture UV from input coordinate.
 vec2 GetTexCoords(ivec2 outCoords)

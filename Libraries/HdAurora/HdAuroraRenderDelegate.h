@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -76,6 +76,13 @@ public:
     bool SampleRestartNeeded() const { return _sampleRestartNeeded; }
     void SetSampleRestartNeeded(bool needed) { _sampleRestartNeeded = needed; }
 
+    // Denoising settings.
+    bool IsDenoisingEnabled() const;
+    uint32_t MaxDenoisingFrameCount() const;
+    bool IsDenoisingComplete() const { return _denoisingFrameCount >= MaxDenoisingFrameCount(); }
+    // Sample count for next denoised frame. Counterpart of SampleCounter::update().
+    uint32_t UpdateDenoisingFrame(bool restart);
+
     void ActivateRenderPass(
         HdAuroraRenderPass* pRenderPass, const map<TfToken, HdAuroraRenderBuffer*>& pRenderBuffers);
     void RenderPassDestroyed(HdAuroraRenderPass* pRenderPass);
@@ -126,7 +133,8 @@ private:
 
     HdAuroraRenderPass* _activeRenderPass = nullptr;
 
-    bool _sampleRestartNeeded = true;
+    bool _sampleRestartNeeded     = true;
+    uint32_t _denoisingFrameCount = 0;
     Aurora::Foundation::SampleCounter _sampleCounter;
 
     GfVec3f _boundsMin = GfVec3f(+FLT_MAX, +FLT_MAX, +FLT_MAX);

@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <adsk:opaque name="PlasticGlossyGrey_shader" type="surfaceshader">
+    <input name="surface_albedo" type="color3" value="1, 1, 1" colorspace="rec709_display" />
+    <input name="opaque_albedo" type="color3" value="0.701411, 0.701411, 0.701411" colorspace="rec709_display" />
+    <input name="surface_roughness" type="float" value="0.122474" />
+    <input name="surface_anisotropy" type="float" value="0" />
+    <input name="surface_rotation" type="float" value="0" />
+    <input name="opaque_f0" type="float" value="0.0529" />
+    <input name="opaque_translucency" type="boolean" value="false" />
+    <input name="opaque_mfp_modifier" type="color3" value="1, 1, 1" colorspace="rec709_display" />
+    <input name="opaque_mfp" type="float" value="0.5" unit="millimeter" unittype="distance" />
+    <input name="opaque_emission" type="boolean" value="false" />
+    <input name="opaque_luminance" type="float" value="0" />
+    <input name="opaque_luminance_modifier" type="color3" value="1, 1, 1" colorspace="rec709_display" />
+  </adsk:opaque>
+  <surfacematerial name="PlasticGlossyGrey" type="material" uiname="Prism-119">
+    <input name="surfaceshader" type="surfaceshader" nodename="PlasticGlossyGrey_shader" />
+  </surfacematerial>
+</materialx>

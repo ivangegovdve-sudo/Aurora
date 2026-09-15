@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,6 +34,9 @@ static const TfToken kIsRestartEnabled("aurora:is_restart_enabled");
 
 /// Whether to enable denoising.
 static const TfToken kIsDenoisingEnabled("aurora:is_denoising_enabled");
+
+/// The number of frames a denoised render accumulates before reporting convergence (default: 50).
+static const TfToken kMaxDenoisingFrameCount("aurora:max_denoising_frame_count");
 
 /// Whether the alpha channel is enabled for output.
 static const TfToken kIsAlphaEnabled("aurora:is_alpha_enabled");

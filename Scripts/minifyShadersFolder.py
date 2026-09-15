@@ -92,13 +92,24 @@ if(len(slangc) > 0 and len(entryPointFile) > 0):
         print("Compiling main entry point %s with Slang compiler %s to DXIL in header %s"%(entryPointFile, slangc, compiledFile))
         compiledTempFile = os.path.dirname(outputFile) +"/"+ mainEntryPoint + ".dxil"
         variableName = "g_s" + mainEntryPoint + "DXIL"
-        cmd = [slangc, entryPointFile, "-DDIRECTX=1", "-DENABLE_RUNTIME_COMPILE_EVALUATE_MATERIAL_FUNCTION=1", "-target", target, "-profile", "lib_6_3", "-o", compiledTempFile, "-dxc-path", os.environ.get('DXC_LIBRARY_DIR')]
+        # -incomplete-library: evaluateMaterialForShader is extern and linked at runtime.
+        cmd = [slangc, entryPointFile, "-DDIRECTX=1", "-DENABLE_RUNTIME_COMPILE_EVALUATE_MATERIAL_FUNCTION=1", "-incomplete-library", "-target", target, "-profile", "lib_6_3", "-o", compiledTempFile, "-dxc-path", os.environ.get('DXC_LIBRARY_DIR')]
+        # Optional denoising with NRD.
+        enable_nrd = os.environ.get("ENABLE_NRD", "OFF").upper() in ("ON", "1", "TRUE")
+        cmd += ["-DENABLE_NRD=1" if enable_nrd else "-DENABLE_NRD=0"]
+        # Add NRD shader include dirs so slangc can resolve #include "NRD.hlsli".
+        nrd_inc = os.environ.get('NRD_SHADERS_INCLUDE_DIR', '')
+        nrd_src = os.environ.get('NRD_SHADERS_SOURCE_DIR', '')
+        if nrd_inc:
+            cmd += ["-I", nrd_inc]
+        if nrd_src:
+            cmd += ["-I", nrd_src]
     else: # "spirv"
         compiledFile = os.path.dirname(outputFile) + "/" + mainEntryPoint + ".h"
         print("Compiling main entry point %s with Slang compiler %s to SPIRV in header %s"%(entryPointFile, slangc, compiledFile))
         compiledTempFile = os.path.dirname(outputFile) +"/"+ mainEntryPoint + ".spv"
         variableName = "g_s" + mainEntryPoint + "SPIRV"
-        cmd = [slangc, entryPointFile, "-target", "spirv", "-o", compiledTempFile]
+        cmd = [slangc, entryPointFile, "-incomplete-library", "-target", "spirv", "-o", compiledTempFile]
 
     result = subprocess.run(cmd, capture_output=True)
     if(result.returncode != 0):

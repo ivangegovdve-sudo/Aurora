@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -63,14 +63,26 @@ struct FrameData
     // The view-projection matrix.
     float4x4 cameraViewProj;
 
+    // The previous frame's view-projection matrix.
+    float4x4 cameraViewProjPrev;
+
     // The inverse view matrix, also transposed. The *rows* must have the desired vectors: right,
     // up, front, and eye position. HLSL array access with [] returns rows, not columns, hence the
     // need for the matrix to be supplied transposed.
     float4x4 cameraInvView;
 
+    // The previous frame's inverse view matrix, also transposed.
+    float4x4 cameraInvViewPrev;
+
     // The dimensions of the view (in world units) at a distance of 1.0 from the camera, which is
     // useful to build ray directions.
     float2 viewSize;
+
+    // Deterministic per-frame camera jitter, in pixel units.
+    float2 cameraJitter;
+
+    // Previous frame's deterministic camera jitter, in pixel units.
+    float2 cameraJitterPrev;
 
     // Whether the camera is using an orthographic projection. Otherwise a perspective projection is
     // assumed.
@@ -82,6 +94,12 @@ struct FrameData
     // The diameter of the lens for depth of field. If this is zero, there is no depth of field,
     // i.e. pinhole camera.
     float lensRadius;
+
+    // Time delta between frames in milliseconds.
+    float timeDeltaMs;
+
+    // Whether deterministic temporal jitter should be used instead of random AA jitter.
+    bool isTemporalJitterEnabled;
 
     // The size of the scene, specifically the maximum distance between any two points in the scene.
     float sceneSize;
@@ -110,7 +128,28 @@ struct FrameData
     // The maximum luminance for path tracing samples, for simple firefly clamping.
     float maxLuminance;
 
-    // Explicitly pad to 16-byte boundary.
+    // Whether Russian Roulette path termination is enabled.
+    bool isRussianRouletteEnabled;
+
+    // The bounce depth (0-based) at which Russian Roulette termination begins being applied.
+    int russianRouletteStartDepth;
+
+    // Whether path space roughness regularization is enabled for indirect (non-primary) rays,
+    // to reduce fireflies from near-specular indirect bounce chains (mirrors, glass, etc.).
+    bool isPathRegularizationEnabled;
+
+    // The strength (0-1) of the path regularization roughness floor at deep bounces.
+    float pathRegularizationStrength;
+
+    // Scale (relative to maxLuminance) used to soft-clamp each indirect bounce's radiance
+    // before it accumulates further, to reduce compounding firefly energy.
+    float indirectBounceClampScale;
+
+    // The view-space Z value written for sky / miss pixels. See RendererBase.h for why this is a
+    // large finite value rather than -INFINITY.
+    float skyViewZ;
+
+    // Pad to a 16-byte boundary.
     float2 _padding1;
 
     // Current light data for scene (duplicated each frame in flight.)

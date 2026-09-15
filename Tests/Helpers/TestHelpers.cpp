@@ -82,6 +82,11 @@ std::string compareTextFile(
             lineNo++;
             std::getline(infile, inlinestr);
             std::getline(cmpsstream, cmplinestr);
+            // Strip carriage return from baseline files (CRLF vs LF difference).
+            if (!inlinestr.empty() && inlinestr.back() == '\r')
+                inlinestr.pop_back();
+            if (!cmplinestr.empty() && cmplinestr.back() == '\r')
+                cmplinestr.pop_back();
             if (infile.eof() && cmpsstream.eof())
                 atEof = true;
             else if (infile.bad() || cmpsstream.bad())

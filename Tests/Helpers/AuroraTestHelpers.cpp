@@ -420,7 +420,7 @@ void FixtureBase::testFloat3Option(
 
         // Expect an assert if set with wrong type.
         options[name] = 123.0f;
-#ifdef NDEBUG
+#if defined(NDEBUG) || defined(WIN32)
         ASSERT_THROW(renderer.setOptions(options), TestHelpers::AuroraLoggerException);
         ASSERT_THAT(lastLogMessage(),
             ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: typesMatch"));
@@ -431,7 +431,7 @@ void FixtureBase::testFloat3Option(
     }
     else
     {
-#ifdef NDEBUG
+#if defined(NDEBUG) || defined(WIN32)
         ASSERT_THROW(renderer.setOptions(options), TestHelpers::AuroraLoggerException);
         ASSERT_THAT(lastLogMessage(),
             ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: find(name) != end"));
@@ -463,7 +463,7 @@ void FixtureBase::testFloatOption(
         // Expect an assert if set with wrong type.
         vec3 testColor(1.0f, 2.0f, 3.0f);
         options[name] = testColor;
-#ifdef NDEBUG
+#if defined(NDEBUG) || defined(WIN32)
         ASSERT_THROW(renderer.setOptions(options), TestHelpers::AuroraLoggerException);
         ASSERT_THAT(lastLogMessage(),
             ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: typesMatch"));
@@ -474,7 +474,7 @@ void FixtureBase::testFloatOption(
     }
     else
     {
-#ifdef NDEBUG
+#if defined(NDEBUG) || defined(WIN32)
         ASSERT_THROW(renderer.setOptions(options), TestHelpers::AuroraLoggerException);
         ASSERT_THAT(lastLogMessage(),
             ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: find(name) != end"));
@@ -505,7 +505,7 @@ void FixtureBase::testBooleanOption(
 
         // Expect an assert if set with wrong type.
         options[name] = vec3(1.0f, 2.0f, 3.0f);
-#ifdef NDEBUG
+#if defined(NDEBUG) || defined(WIN32)
         ASSERT_THROW(renderer.setOptions(options), TestHelpers::AuroraLoggerException);
         ASSERT_THAT(lastLogMessage(),
             ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: typesMatch"));
@@ -516,7 +516,7 @@ void FixtureBase::testBooleanOption(
     }
     else
     {
-#ifdef NDEBUG
+#if defined(NDEBUG) || defined(WIN32)
         ASSERT_THROW(renderer.setOptions(options), TestHelpers::AuroraLoggerException);
         ASSERT_THAT(lastLogMessage(),
             ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: find(name) != end"));
@@ -548,7 +548,7 @@ void FixtureBase::testIntOption(
         // Expect an assert if set with wrong type.
         vec3 testValue(1.0f, 2.0f, 3.0f);
         options[name] = testValue;
-#ifdef NDEBUG
+#if defined(NDEBUG) || defined(WIN32)
         ASSERT_THROW(renderer.setOptions(options), TestHelpers::AuroraLoggerException);
         ASSERT_THAT(lastLogMessage(),
             ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: typesMatch"));
@@ -559,7 +559,7 @@ void FixtureBase::testIntOption(
     }
     else
     {
-#ifdef NDEBUG
+#if defined(NDEBUG) || defined(WIN32)
         ASSERT_THROW(renderer.setOptions(options), TestHelpers::AuroraLoggerException);
         ASSERT_THAT(lastLogMessage(),
             ::testing::StartsWith("AU_ASSERT test failed:\nEXPRESSION: find(name) != end"));

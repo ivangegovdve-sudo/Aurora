@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ public:
     ~MaterialGeneratorTest() {}
     const std::string& dataPath() { return _dataPath; }
     // Test for the existence of the ADSK materialX libraries (in the working folder for the tests)
-    bool adskMaterialXSupport() { return std::filesystem::exists("MaterialX/libraries/adsk"); }
+    bool adskMaterialXSupport() { return std::filesystem::exists("MaterialX/libraries/adsklib"); }
 
 protected:
 #if defined(__APPLE__)
@@ -103,17 +103,17 @@ const char* materialXString2 = R""""(
     <materialx version = "1.38">
         <nodegraph name="NG1">
         <image name="base_color_image" type="color3">
-            <parameter name="file" type="filename" value="../Textures/CoatOfArms.bmp" />
-            <parameter name="uaddressmode" type="string" value="periodic" />
-            <parameter name="vaddressmode" type="string" value="periodic" />
+            <input name="file" type="filename" value="../Textures/CoatOfArms.bmp" />
+            <input name="uaddressmode" type="string" value="periodic" />
+            <input name="vaddressmode" type="string" value="periodic" />
         </image>
         <output name="out1" type="color3" nodename="base_color_image" />
         </nodegraph>
         <nodegraph name="NG2">
         <image name="specular_roughness_image" type="float">
-            <parameter name="file" type="filename" value="../Textures/fishscale_roughness.png" />
-            <parameter name="uaddressmode" type="string" value="periodic" />
-            <parameter name="vaddressmode" type="string" value="periodic" />
+            <input name="file" type="filename" value="../Textures/fishscale_roughness.png" />
+            <input name="uaddressmode" type="string" value="periodic" />
+            <input name="vaddressmode" type="string" value="periodic" />
         </image>
         <output name="out1" type="float" nodename="specular_roughness_image" />
         </nodegraph>
@@ -142,7 +142,7 @@ const char* materialXString3 = R""""(
     <materialx version = "1.38">
         <nodegraph name="NG1">
         <image name="base_color_image" type="color3">
-            <parameter name="file" type="filename" value="../Textures/CoatOfArms.bmp" />
+            <input name="file" type="filename" value="../Textures/CoatOfArms.bmp" />
         </image>
         <output name="out1" type="color3" nodename="base_color_image" />
         </nodegraph>
@@ -166,7 +166,7 @@ TEST_F(MaterialGeneratorTest, BasicTest)
 
     Aurora::MaterialDefinitionPtr pMtlDef0 = matGen.generate(materialXString0);
     ASSERT_NE(pMtlDef0, nullptr);
-    EXPECT_STREQ(pMtlDef0->source().uniqueId.c_str(), "MaterialX_d183faa1b8cb18d7");
+    EXPECT_STREQ(pMtlDef0->source().uniqueId.c_str(), "MaterialX_f9fe6c76b2284bbb");
     EXPECT_EQ(pMtlDef0->defaults().properties.size(), 7);
     EXPECT_EQ(pMtlDef0->defaults().propertyDefinitions.size(), 7);
     EXPECT_NEAR(pMtlDef0->defaults().properties[2].asFloat(), 0.8f, 0.01f);
@@ -175,7 +175,7 @@ TEST_F(MaterialGeneratorTest, BasicTest)
 
     Aurora::MaterialDefinitionPtr pMtlDef1 = matGen.generate(materialXString1);
     ASSERT_NE(pMtlDef1, nullptr);
-    EXPECT_STREQ(pMtlDef1->source().uniqueId.c_str(), "MaterialX_d183faa1b8cb18d7");
+    EXPECT_STREQ(pMtlDef1->source().uniqueId.c_str(), "MaterialX_f9fe6c76b2284bbb");
     EXPECT_EQ(pMtlDef1->defaults().properties.size(), 7);
     EXPECT_EQ(pMtlDef1->defaults().propertyDefinitions.size(), 7);
     EXPECT_NEAR(pMtlDef1->defaults().properties[2].asFloat(), 0.1f, 0.01f);
@@ -191,7 +191,7 @@ TEST_F(MaterialGeneratorTest, BasicTest)
 
     Aurora::MaterialDefinitionPtr pMtlDef2 = matGen.generate(materialXString2);
     ASSERT_NE(pMtlDef2, nullptr);
-    EXPECT_STREQ(pMtlDef2->source().uniqueId.c_str(), "MaterialX_845875d7ffe5edaf");
+    EXPECT_STREQ(pMtlDef2->source().uniqueId.c_str(), "MaterialX_6f62b480e169f6b8");
     EXPECT_EQ(pMtlDef2->defaults().properties.size(), 6);
     EXPECT_EQ(pMtlDef2->defaults().propertyDefinitions.size(), 6);
     EXPECT_EQ(pMtlDef2->defaults().textureNames.size(), 2);
@@ -217,6 +217,55 @@ TEST_F(MaterialGeneratorTest, BasicTest)
     pMtlDef2Dupe.reset();
     EXPECT_EQ(pMtlDef2.use_count(), 1);
     pMtlDef2.reset();
+}
+
+// A document loaded from a file resolves its relative texture references against that file's
+// folder. BasicTest above covers the complementary case: with no base directory the filenames are
+// passed through exactly as authored.
+TEST_F(MaterialGeneratorTest, BaseDirectoryResolvesTextures)
+{
+    string mtlxFolder = Foundation::getModulePath() + "MaterialX";
+    Aurora::MaterialXCodeGen::MaterialGenerator matGen(mtlxFolder);
+
+    // materialXString2 references ../Textures/CoatOfArms.bmp and
+    // ../Textures/fishscale_roughness.png, which resolve relative to the Materials folder.
+    const string materialsFolder = dataPath() + "/Materials";
+
+    Aurora::MaterialDefinitionPtr pMtlDef = matGen.generate(materialXString2, "", materialsFolder);
+    ASSERT_NE(pMtlDef, nullptr);
+    ASSERT_EQ(pMtlDef->defaults().textures.size(), 2);
+
+    for (const auto& texture : pMtlDef->defaults().textures)
+    {
+        const std::filesystem::path resolvedPath(texture.defaultFilename);
+        EXPECT_TRUE(resolvedPath.is_absolute()) << texture.defaultFilename;
+        EXPECT_TRUE(std::filesystem::exists(resolvedPath)) << texture.defaultFilename;
+    }
+    EXPECT_STREQ(std::filesystem::path(pMtlDef->defaults().textures[0].defaultFilename)
+                     .filename()
+                     .string()
+                     .c_str(),
+        "CoatOfArms.bmp");
+
+    // Resolving the filenames must not change the generated shader: the shader is hashed from the
+    // generated code, and texture filenames are default values rather than code.
+    EXPECT_STREQ(pMtlDef->source().uniqueId.c_str(), "MaterialX_6f62b480e169f6b8");
+
+    // A base directory that cannot resolve the references leaves them exactly as authored, rather
+    // than producing a rewritten path that no host callback could recover. Note the folder has to
+    // be nested under a nonexistent one: "<assets>/NoSuchFolder/../Textures" would collapse back
+    // onto the real Textures folder and resolve.
+    Aurora::MaterialDefinitionPtr pUnresolvedDef =
+        matGen.generate(materialXString2, "", dataPath() + "/NoSuchRoot/NoSuchFolder");
+    ASSERT_NE(pUnresolvedDef, nullptr);
+    ASSERT_EQ(pUnresolvedDef->defaults().textures.size(), 2);
+    EXPECT_STREQ(pUnresolvedDef->defaults().textures[0].defaultFilename.c_str(),
+        "../Textures/CoatOfArms.bmp");
+    EXPECT_STREQ(pUnresolvedDef->source().uniqueId.c_str(), "MaterialX_6f62b480e169f6b8");
+
+    // The base directory is part of the definition cache key, so the same document loaded from
+    // different folders yields distinct definitions rather than aliasing onto the first one.
+    EXPECT_NE(pMtlDef.get(), pUnresolvedDef.get());
 }
 
 TEST_F(MaterialGeneratorTest, MaterialShaderLibraryTest)

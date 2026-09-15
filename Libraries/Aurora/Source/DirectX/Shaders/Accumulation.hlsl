@@ -1,7 +1,7 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compBliance with the License.
+// you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
 // http://www.apache.org/licenses/LICENSE-2.0
@@ -17,8 +17,8 @@
 // have to be initialized in advance.
 #define ROOT_SIGNATURE                                                                             \
     "RootFlags(0),"                                                                                \
-    "DescriptorTable(UAV(u0, numDescriptors = 10, flags = DESCRIPTORS_VOLATILE)), "                \
-    "RootConstants(b0, num32BitConstants = 2)"
+    "DescriptorTable(UAV(u0, numDescriptors = 19, flags = DESCRIPTORS_VOLATILE)), "                \
+    "RootConstants(b0, num32BitConstants = 5)"
 
 // Source (input) and destination (output) textures.
 RWTexture2D<float4> gAccumulation : register(u0);
@@ -29,14 +29,37 @@ RWTexture2D<float4> gNormalRoughness : register(u4);
 RWTexture2D<float4> gBaseColorMetalness : register(u5);
 RWTexture2D<float4> gDiffuse : register(u6);
 RWTexture2D<float4> gGlossy : register(u7);
-RWTexture2D<float4> gDiffuseDenoised : register(u8);
-RWTexture2D<float4> gGlossyDenoised : register(u9);
+RWTexture2D<float4> gMotionVectors : register(u8);
+RWTexture2D<float4> gDiffuseDenoised : register(u9);
+RWTexture2D<float4> gGlossyDenoised : register(u10);
+// The material demodulation factors the ray generator divided out of the NRD input lobes, to be
+// multiplied back in below. This table starts at the accumulation texture (heap index 1), so
+// register uN is heap index N + 1; these sit at the end of the heap, past the descriptors only
+// post-processing uses. See kDemodDescriptorOffset. Read-only in this pass.
+RWTexture2D<float4> gDemodDiffuse : register(u16);
+RWTexture2D<float4> gDemodSpecular : register(u17);
+// Unit-length world normal with .w storing linear roughness. Written by the ray generator.
+// NRD's guide cannot serve this purpose because of its descriptor layout.
+// Read-only in this pass.
+RWTexture2D<float4> gGuideNormalRoughness : register(u18);
 
 // Layout of accumulation properties.
 struct Accumulation
 {
     uint sampleIndex;
-    bool isDenoisingEnabled;
+
+    // Composite NRD's denoised diffuse/glossy outputs on top of the direct channel.
+    bool isDenoisedCompositeEnabled;
+
+    // A temporal stage downstream of this one owns frame-to-frame blending. Broader than the flag
+    // above: an upscaler is a temporal stage even on a frame where NRD did not run.
+    bool isTemporalResolveDownstream;
+
+    // Sentinel view-Z written for sky / miss pixels; see FrameData::skyViewZ.
+    float skyViewZ;
+
+    // Reverse the material demodulation the ray generator applied to the NRD input lobes.
+    bool remodulateMaterials;
 };
 
 // Constant buffer of accumulation values.
@@ -67,21 +90,33 @@ void Accumulation(uint3 threadID : SV_DispatchThreadID)
 
     // Combine data from textures if denoising is enabled. Otherwise the "result" value has the
     // complete path tracing output.
-    if (gSettings.isDenoisingEnabled)
+    if (gSettings.isDenoisedCompositeEnabled)
     {
-        // Collect the necessary values. This includes a "hit factor" which is 0 for a background
-        // sample and 1 for a surface sample ("hit"). This is detected by testing for an infinite
-        // value in the view depth texture.
-        float hitFactor        = gDepthView[screenCoords].r != 1.#INF;
-        float3 baseColor       = gBaseColorMetalness[screenCoords].rgb;
+        // A "hit factor" of 0 for a background sample and 1 for a surface sample. Background is
+        // detected against the sky sentinel the miss shader writes (see FrameData::skyViewZ), which
+        // is a large finite negative value rather than -INFINITY, because an infinity in the view-Z
+        // guide is a NaN hazard inside NRD. Real geometry (|viewZ| <= denoisingRange) and the
+        // sentinel (twice that) sit comfortably either side of this midpoint.
+        float hitFactor = gDepthView[screenCoords].r > (gSettings.skyViewZ * 0.75f) ? 1.0f : 0.0f;
+
+        // RELAX outputs linear RGB directly, so no inverse colour transform is needed here.
         float3 denoisedDiffuse = gDiffuseDenoised[screenCoords].rgb * hitFactor;
         float3 denoisedGlossy  = gGlossyDenoised[screenCoords].rgb * hitFactor;
 
+        // Re-modulate: put back the material the ray generator divided out before NRD saw the
+        // signal. The same factors from the same buffers, so the round trip is lossless wherever
+        // the denoiser is a no-op. See MainEntryPoints.slang.
+        if (gSettings.remodulateMaterials)
+        {
+            denoisedDiffuse *= gDemodDiffuse[screenCoords].rgb;
+            denoisedGlossy  *= gDemodSpecular[screenCoords].rgb;
+        }
+
         // Combine the following:
-        // - Extra: shading that is not denoised. See RadianceRayPayload for more information.
-        // - The denoised diffuse radiance, modulated by the base color (albedo).
+        // - Extra: direct shading (not denoised). Stored in gResult by the ray gen shader.
+        // - The denoised diffuse radiance.
         // - The denoised glossy radiance.
-        result.rgb = extra + (denoisedDiffuse * baseColor) + denoisedGlossy;
+        result.rgb = extra + denoisedDiffuse + denoisedGlossy;
     }
 
     // If the sample index is greater than zero, blend the new result color with the previous
@@ -101,12 +136,11 @@ void Accumulation(uint3 threadID : SV_DispatchThreadID)
             // Compute a blend factor (between the previous and new result) based on the sample
             // index, with the new result having less influence with an increasing sample index,
             // e.g. with sample index #4 (the 5th sample), the final result is 4/5 of the previous
-            // (accumulated) result and 1/5 of the new result. If denoising is enabled, this should
-            // be treated as temporal accumulation, with the new result having a fixed influence, so
-            // that older results are eventually discarded.
-            static const float TEMPORAL_BLEND_FACTOR = 0.1f;
-            float t =
-                gSettings.isDenoisingEnabled ? TEMPORAL_BLEND_FACTOR : 1.0f / (sampleIndex + 1);
+            // (accumulated) result and 1/5 of the new result. When a temporal stage downstream of
+            // this one owns frame-to-frame blending, t = 1.0 bypasses the progressive average
+            // entirely: a second accumulation layer in series compounds latency, and a temporal
+            // upscaler's heuristics expect the raw per-frame signal, not a pre-averaged one.
+            float t = gSettings.isTemporalResolveDownstream ? 1.0f : 1.0f / (sampleIndex + 1);
 
             // Blend between the previous result and the new result using the factor.
             result = lerp(prevResult, result, t);

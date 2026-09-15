@@ -6,9 +6,17 @@ endif()
 # Work out Windows 10 SDK path and version
 # NOTE: Based on https://github.com/microsoft/DirectXShaderCompiler/blob/master/cmake/modules/FindD3D12.cmake
 if("$ENV{WINDOWS_SDK_PATH}$ENV{WINDOWS_SDK_VERSION}" STREQUAL "" )
+    get_filename_component(WINDOWS_SDK_PATH "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots;KitsRoot10]" ABSOLUTE CACHE)
     if(CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION)
-        get_filename_component(WINDOWS_SDK_PATH "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots;KitsRoot10]" ABSOLUTE CACHE)
         set (WINDOWS_SDK_VERSION ${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION})
+    elseif(IS_DIRECTORY "${WINDOWS_SDK_PATH}/Include")
+        # Use the newest SDK for non-Visual Studio generators.
+        file(GLOB _sdk_versions RELATIVE "${WINDOWS_SDK_PATH}/Include"
+             "${WINDOWS_SDK_PATH}/Include/10.*")
+        list(SORT _sdk_versions COMPARE NATURAL)
+        list(REVERSE _sdk_versions)
+        list(GET _sdk_versions 0 WINDOWS_SDK_VERSION)
+        unset(_sdk_versions)
     else()
         message(FATAL_ERROR
             "The Windows SDK cannot be found and it is required to build the DirectX backend for "

@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,26 +17,30 @@
 
 #include "CompiledShaders/CommonShaders.h"
 #include "CompiledShaders/MainEntryPoints.h"
+#if defined(ENABLE_DENOISER)
+#include "CompiledShaders/NRDShaders.h"
+#endif
 #include "PTGeometry.h"
 #include "PTImage.h"
 #include "PTMaterial.h"
 #include "PTRenderer.h"
 #include "PTScene.h"
-#include "PTShaderLibrary.h"
 #include "PTTarget.h"
 #include "Transpiler.h"
 
 // Development flag to enable/disable multithreaded compilation.
-#define AU_DEV_MULTITHREAD_COMPILATION 0
+#define AU_DEV_MULTITHREAD_COMPILATION 1
 
 // Dump individual compilation times for each shader.
 #define AU_DEV_DUMP_INDIVIDUAL_COMPILATION_TIME 0
 
 #if AU_DEV_MULTITHREAD_COMPILATION
 #include <execution>
+#include <future>
 #endif
 
 BEGIN_AURORA
+
 // Input to thread used to compile shaders.
 struct CompileJob
 {
@@ -190,11 +194,12 @@ string PTShaderOptions::toHLSL() const
 }
 
 // Define entry point name constants.
-const LPWSTR PTShaderLibrary::kInstanceHitGroupName             = L"InstanceClosestHitShaderGroup";
-const LPWSTR PTShaderLibrary::kInstanceClosestHitEntryPointName = L"InstanceClosestHitShader";
-const LPWSTR PTShaderLibrary::kInstanceShadowAnyHitEntryPointName = L"InstanceShadowAnyHitShader";
-const LPWSTR PTShaderLibrary::kRayGenEntryPointName               = L"RayGenShader";
-const LPWSTR PTShaderLibrary::kShadowMissEntryPointName           = L"ShadowMissShader";
+const LPWSTR PTShaderLibrary::kInstanceHitGroupNamePrefix               = L"InstanceHitGroup_";
+const LPWSTR PTShaderLibrary::kInstanceClosestHitEntryPointNamePrefix   = L"InstanceClosestHitShader_";
+const LPWSTR PTShaderLibrary::kInstanceShadowAnyHitEntryPointNamePrefix = L"InstanceShadowAnyHitShader_";
+const LPWSTR PTShaderLibrary::kInstanceMissEntryPointName               = L"InstanceMissShader";
+const LPWSTR PTShaderLibrary::kRayGenEntryPointName                     = L"RayGenShader";
+const LPWSTR PTShaderLibrary::kShadowMissEntryPointName                 = L"ShadowMissShader";
 
 bool PTShaderLibrary::compileLibrary(const ComPtr<IDxcLibrary>& pDXCLibrary, const string source,
     const string& name, const string& target, const string& entryPoint,
@@ -215,6 +220,8 @@ bool PTShaderLibrary::compileLibrary(const ComPtr<IDxcLibrary>& pDXCLibrary, con
 
     // Build vector of argument flags to pass to compiler.
     vector<const wchar_t*> args;
+    // DO NOT remove the -WX flag below. Some fragile drivers may fail to render if any warnings
+    // are present in shader compilation.
     args.push_back(L"-WX"); // Warning as error.
     if (debug)
     {
@@ -224,6 +231,8 @@ bool PTShaderLibrary::compileLibrary(const ComPtr<IDxcLibrary>& pDXCLibrary, con
     }
     else
     {
+        args.push_back(L"-Qstrip_debug");
+        args.push_back(L"-Qstrip_reflect");
         args.push_back(L"-O3"); // Optimization level 3
     }
 
@@ -385,7 +394,8 @@ ID3D12RootSignaturePtr PTShaderLibrary::createRootSignature(const D3D12_ROOT_SIG
     return pSignature;
 }
 
-void PTShaderLibrary::initRootSignatures(int globalTextureCount, int globalSamplerCount)
+void PTShaderLibrary::initRootSignatures(
+    int globalTextureCount, [[maybe_unused]]int globalTexture3DCount, int globalSamplerCount)
 {
     // Specify the global root signature for all shaders. This includes a global static sampler
     // which shaders can use by default, as well as dynamic samplers per-material.
@@ -395,7 +405,7 @@ void PTShaderLibrary::initRootSignatures(int globalTextureCount, int globalSampl
     // Create the global root signature.
     // Must match the root signature data setup in PTRenderer::submitRayDispatch and the GPU
     // version in GlobalRootSignature.slang.
-    array<CD3DX12_ROOT_PARAMETER, 14> globalRootParameters = {}; // NOLINT(modernize-avoid-c-arrays)
+    array<CD3DX12_ROOT_PARAMETER, 17> globalRootParameters = {}; // NOLINT(modernize-avoid-c-arrays)
     globalRootParameters[0].InitAsShaderResourceView(0);         // gScene: acceleration structure
     globalRootParameters[1].InitAsConstants(2, 0);               // sampleIndex + seedOffset
     globalRootParameters[2].InitAsConstantBufferView(1); // gFrameData: per-frame constant buffer
@@ -417,20 +427,37 @@ void PTShaderLibrary::initRootSignatures(int globalTextureCount, int globalSampl
         8); // gTransformMatrixBuffer: Transform matrices for all instances.
 
     texRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, globalTextureCount,
-        9); // gGlobalMaterialTextures: Global scene textures.
-    CD3DX12_DESCRIPTOR_RANGE sceneTextureRanges[] = {
-        texRange
-    }; // NOLINT(modernize-avoid-c-arrays)
+        9, 0); // gGlobalMaterialTextures: Global scene textures.
+    CD3DX12_DESCRIPTOR_RANGE sceneTextureRanges[] = { texRange }; // NOLINT(modernize-avoid-c-arrays)
     globalRootParameters[12].InitAsDescriptorTable(
         _countof(sceneTextureRanges), sceneTextureRanges);
+    texRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, std::max(1, globalTexture3DCount),
+        9, 1); // gGlobalMaterialTextures3D: Global scene 3D textures.
+    CD3DX12_DESCRIPTOR_RANGE sceneTexture3DRanges[] = { texRange }; // NOLINT(modernize-avoid-c-arrays)
+    globalRootParameters[13].InitAsDescriptorTable(
+        _countof(sceneTexture3DRanges), sceneTexture3DRanges);
 
     // Sampler descriptors in gGlobalMaterialSamplers array starting at register(s0)
     samplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, globalSamplerCount, 0);
     CD3DX12_DESCRIPTOR_RANGE globalSamplerRanges[] = {
         samplerRange
     }; // NOLINT(modernize-avoid-c-arrays)
-    globalRootParameters[13].InitAsDescriptorTable(
+    globalRootParameters[14].InitAsDescriptorTable(
         _countof(globalSamplerRanges), globalSamplerRanges);
+
+    // The AOV descriptor count defined here must match the AOV RWTexture2Ds defined in
+    // MainEntryPoints.slang. and the descriptors uploaded to the heap in
+    // PTRenderer::updateOutputResources and PTRenderer::updateDenoisingResources.
+    // NOTE: The output UAVs are typed, and therefore can't be used with a root descriptor; they
+    // must come from a descriptor heap.
+    CD3DX12_DESCRIPTOR_RANGE uavRange;
+    uavRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 8, 0); // Output images (for AOV data)
+    globalRootParameters[15].InitAsDescriptorTable(1, &uavRange);
+
+    // The guide block: gDemodDiffuse, gDemodSpecular and gGuideNormalRoughness.
+    CD3DX12_DESCRIPTOR_RANGE guideUavRange;
+    guideUavRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 8);
+    globalRootParameters[16].InitAsDescriptorTable(1, &guideUavRange);
 
     // Create the global root signature object, there are no static samplers (all the samplers
     // including default sampler are stored in gSamplerArray.)
@@ -438,23 +465,6 @@ void PTShaderLibrary::initRootSignatures(int globalTextureCount, int globalSampl
         static_cast<UINT>(globalRootParameters.size()), globalRootParameters.data(), 0, nullptr);
     _pGlobalRootSignature = createRootSignature(globalDesc);
     _pGlobalRootSignature->SetName(L"Global Root Signature");
-
-    // Specify a local root signature for the ray gen shader.
-    // The AOV descriptor count defined here must match the AOV RWTexture2Ds defined in
-    // MainEntryPoints.slang. and the descriptors uploaded to the heap in
-    // PTRenderer::updateOutputResources and PTRenderer::updateDenoisingResources.
-    // NOTE: The output UAVs are typed, and therefore can't be used with a root descriptor; they
-    // must come from a descriptor heap.
-    CD3DX12_DESCRIPTOR_RANGE uavRange;
-    uavRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 7, 0);   // Output images (for AOV data)
-    CD3DX12_DESCRIPTOR_RANGE rayGenRanges[] = { uavRange }; // NOLINT(modernize-avoid-c-arrays)
-    array<CD3DX12_ROOT_PARAMETER, 1> rayGenRootParameters = {};
-    rayGenRootParameters[0].InitAsDescriptorTable(_countof(rayGenRanges), rayGenRanges);
-    CD3DX12_ROOT_SIGNATURE_DESC rayGenDesc(
-        static_cast<UINT>(rayGenRootParameters.size()), rayGenRootParameters.data());
-    rayGenDesc.Flags      = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
-    _pRayGenRootSignature = createRootSignature(rayGenDesc);
-    _pRayGenRootSignature->SetName(L"Ray Gen Local Root Signature");
 
     // Start a local root signature for the instance hit group (that is shared by all instances.)
     // Must match the GPU layout defined in InstancePipelineState.slang and the HitGroupShaderRecord
@@ -470,7 +480,7 @@ void PTShaderLibrary::initRootSignatures(int globalTextureCount, int globalSampl
 
     // Constants from HitGroupShaderRecord: gHasNormals, gHasTangents, gHasTexCoords,
     // gIsOpaque, and gInstanceBufferOffset.
-    instanceHitParameters[5].InitAsConstants(5, 0, 1);
+    instanceHitParameters[5].InitAsConstants(6, 0, 1);
 
     // gMaterialLayerIDs: indices for layer material shaders.
     instanceHitParameters[6].InitAsConstantBufferView(1, 1);
@@ -483,7 +493,7 @@ void PTShaderLibrary::initRootSignatures(int globalTextureCount, int globalSampl
     _pInstanceHitRootSignature->SetName(L"Instance Hit Group Local Root Signature");
 }
 
-DirectXShaderIdentifier PTShaderLibrary::getShaderID(LPWSTR name)
+DirectXShaderIdentifier PTShaderLibrary::getShaderID(LPCWSTR name)
 {
     // Assert if a rebuild is required, as the pipeline state will be invalid.
     AU_ASSERT(!rebuildRequired(),
@@ -513,6 +523,21 @@ private:
     size_t _size;
 };
 
+shared_ptr<Transpiler> PTShaderLibrary::createTranspiler()
+{
+    // Create Transpiler; initializes Slang session (~1s), started early to overlap with scene loading.
+    // Transpilers persist for library lifetime; later rebuilds are free.
+    auto pTranspiler = make_shared<Transpiler>(CommonShaders::g_sDirectory);
+#if defined(ENABLE_DENOISER)
+    // Add embedded NRD shaders to the virtual file system.
+    for (const auto& [name, source] : NRDShaders::directory())
+    {
+        pTranspiler->setSource(name, source);
+    }
+#endif
+    return pTranspiler;
+}
+
 void PTShaderLibrary::initialize()
 {
     // Create a static block from the precompiled main entry point DXIL.
@@ -526,14 +551,40 @@ void PTShaderLibrary::initialize()
 
     // Always use runtime compiled evaluateMaterialForShader.
     // TODO: Use pre-compiled default version when only default shader is used in scene.
+#if ENABLE_MDL
+    _options.set("ENABLE_RUNTIME_COMPILE_EVALUATE_MATERIAL_FUNCTION", 0);
+#else
     _options.set("ENABLE_RUNTIME_COMPILE_EVALUATE_MATERIAL_FUNCTION", 1);
+#endif
     // Disable validation of texture indices unless debugging for development purposes.
     _options.set("ENABLE_VALIDATE_TEXTURE_INDICES", 0);
 
     _optionsSource = _options.toHLSL();
 
-    // Create an empty array of Slang transpilers.
-    _transpilerArray = {};
+    // Do NOT clear the _transpilerArray here. Keeping transpilers alive so that subsequent
+    // rebuilds (e.g. after a material change) pay zero session-creation cost.
+
+    // Prebuild transpilers so Slang sessions are ready for the first rebuild.
+    // Two cover typical jobs; rebuild() adds more as needed.
+#if AU_DEV_MULTITHREAD_COMPILATION
+    if (_transpilerArray.empty() && !_transpilerWarmup.valid())
+    {
+        static constexpr size_t kWarmupTranspilerCount = 2;
+        _transpilerArray.resize(kWarmupTranspilerCount);
+        _transpilerWarmup = std::async(std::launch::async, [this] {
+            vector<std::future<void>> pending;
+            for (size_t i = 0; i < kWarmupTranspilerCount; i++)
+            {
+                pending.push_back(std::async(
+                    std::launch::async, [this, i] { _transpilerArray[i] = createTranspiler(); }));
+            }
+            for (auto& task : pending)
+            {
+                task.get();
+            }
+        });
+    }
+#endif
 
     // Clear the source and built ins vector. Not strictly needed, but this function could be called
     // repeatedly in the future.
@@ -595,13 +646,33 @@ void PTShaderLibrary::setupCompileJobForShader(const MaterialShader& shader, Com
     // Add shared common code.
     auto& source = shader.definition().source;
 
+#if ENABLE_MDL
+    const bool jobUsesMdl = shader.id() != "Default";
+    if (jobUsesMdl)
+    {
+        jobOut.code += "#define ENABLE_MDL 1\n";
+    }
+#endif
+
     jobOut.code += R"(
 #include "Options.slang"
 #include "Definitions.slang"
 
 )";
 
-    jobOut.code += source.setup;
+    jobOut.code += source.setup + "\n\n";
+
+    jobOut.code += source.bsdf + "\n\n";
+
+#if ENABLE_MDL
+    // Add entry point code if this is a MaterialX material
+    if (jobUsesMdl)
+    {
+        jobOut.code += "#define MATERIAL_ID " + shader.id() + "\n";
+        jobOut.code += "#if ENABLE_NRD\n#include \"NRD.slang\"\n#endif\n";
+        jobOut.code += "#include \"HitShaderEntryPoints.slang\"";
+    }
+#endif
 
     // Get the compiled shader for this material shader.
     auto& compiledShader = _compiledShaders[shader.libraryIndex()];
@@ -630,7 +701,7 @@ void PTShaderLibrary::generateEvaluateMaterialFunction(CompileJob& job)
 
     // Add declaration for default evaluate material function.
     job.code +=
-        "Material evaluateDefaultMaterial(ShadingData shading, int offset, inout float3 "
+        "extern Material evaluateDefaultMaterial(ShadingData shading, int offset, inout float3 "
         "materialNormal, out bool isGeneratedNormal);\n";
 
     // Add declaration for each of the runtime compiled evaluate material functions (these will be
@@ -638,7 +709,11 @@ void PTShaderLibrary::generateEvaluateMaterialFunction(CompileJob& job)
     for (int i = 1; i < _compiledShaders.size(); i++)
     {
         auto& compiledShader = _compiledShaders[i];
-        job.code += compiledShader.setupFunctionDeclaration + ";\n";
+        // Slots for shaders that were never compiled have an empty declaration; emitting a bare
+        // "extern ;" for those is a Slang parse error.
+        if (compiledShader.setupFunctionDeclaration.empty())
+            continue;
+        job.code += "extern " + compiledShader.setupFunctionDeclaration + ";\n";
     }
 
     // Add evaluate function definition.
@@ -699,14 +774,14 @@ void PTShaderLibrary::generateEvaluateMaterialFunction(CompileJob& job)
     job.index = -1;
 }
 
-void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
+void PTShaderLibrary::rebuild(int globalTextureCount, int globalTexture3DCount, int globalSamplerCount)
 {
 
     // Start timer.
     _timer.reset();
 
     // Initialize root signatures (these are shared by all shaders, and don't change.)
-    initRootSignatures(globalTextureCount, globalSamplerCount);
+    initRootSignatures(globalTextureCount, globalTexture3DCount, globalSamplerCount);
 
     // Should only be called if required (rebuilding requires stalling the GPU pipeline.)
     AU_ASSERT(rebuildRequired(), "Rebuild not needed");
@@ -731,7 +806,6 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
         // If the compiled shader object is empty, fill in the entry points, etc.
         if (compiledShader.id.empty())
         {
-
             // Set the ID from the shader ID.
             _compiledShaders[shader.libraryIndex()].id           = shader.id();
             _compiledShaders[shader.libraryIndex()].hlslFilename = shader.id() + ".hlsl";
@@ -756,14 +830,20 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
         if (shader.libraryIndex() == kDefaultShaderIndex)
         {
             compileJobs.back().entryPoints.push_back(
-                { "miss", Foundation::w2s(kShadowMissEntryPointName) });
-            compileJobs.back().entryPoints.push_back(
                 { "raygeneration", Foundation::w2s(kRayGenEntryPointName) });
             compileJobs.back().entryPoints.push_back(
-                { "closesthit", Foundation::w2s(kInstanceClosestHitEntryPointName) });
+                { "miss", Foundation::w2s(kShadowMissEntryPointName) });
             compileJobs.back().entryPoints.push_back(
-                { "anyhit", Foundation::w2s(kInstanceShadowAnyHitEntryPointName) });
+                { "miss", Foundation::w2s(kInstanceMissEntryPointName) });
         }
+
+        string closestHitEntryName =
+            Foundation::w2s(kInstanceClosestHitEntryPointNamePrefix) + shader.id();
+        string anyHitEntryName =
+            Foundation::w2s(kInstanceShadowAnyHitEntryPointNamePrefix) + shader.id();
+
+        compileJobs.back().entryPoints.push_back({ "closesthit", closestHitEntryName });
+        compileJobs.back().entryPoints.push_back({ "anyhit", anyHitEntryName });
 
         return true;
     };
@@ -781,9 +861,11 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
     if (!_shaderLibrary.update(setupShaderFunction, destroyShaderFunction))
         return;
 
+#if !ENABLE_MDL
     // Generate the evaluateMaterialForShader function, and add to compile jobs.
     compileJobs.push_back(CompileJob(int(compileJobs.size())));
     generateEvaluateMaterialFunction(compileJobs.back());
+#endif
 
     // Binary for the compiled evaluateMaterial function.
     ComPtr<IDxcBlob> evaluateMaterialBinary;
@@ -811,21 +893,39 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
     // number are allocated.
     float scStart          = _timer.elapsed();
     size_t transpilerCount = AU_DEV_MULTITHREAD_COMPILATION ? compileJobs.size() : 1;
-    for (size_t i = _transpilerArray.size(); i < transpilerCount; i++)
+
+    // Collect warm-up from initialize(). Usually already done; cost hidden behind scene load.
+    if (_transpilerWarmup.valid())
     {
-        _transpilerArray.push_back(make_shared<Transpiler>(CommonShaders::g_sDirectory));
+        _transpilerWarmup.get();
+    }
+
+    // Top up if more transpilers are needed than warmed; build extras concurrently.
+    if (_transpilerArray.size() < transpilerCount)
+    {
+        _transpilerArray.resize(transpilerCount);
+    }
+    vector<std::future<void>> pending;
+    for (size_t i = 0; i < _transpilerArray.size(); i++)
+    {
+        if (!_transpilerArray[i])
+        {
+            pending.push_back(std::async(
+                std::launch::async, [this, i] { _transpilerArray[i] = createTranspiler(); }));
+        }
+    }
+    for (auto& task : pending)
+    {
+        task.get();
     }
     float scEnd = _timer.elapsed();
 
     // Cache main shader binaries to avoid entry point conflicts caused by retranspiling same shader
     // string.
-#if AU_DEV_MULTITHREAD_COMPILATION
-    static tbb::concurrent_unordered_map<string, ComPtr<IDxcBlob>> shaderBinaryCache = {
-        { _defaultOptions, _pDefaultShaderDXIL }
-    };
-#else
     static unordered_map<string, ComPtr<IDxcBlob>> shaderBinaryCache = { { _defaultOptions,
         _pDefaultShaderDXIL } };
+#if AU_DEV_MULTITHREAD_COMPILATION
+    static mutex shaderBinaryCacheMutex;
 #endif
 
     // Transpilation and DXC Compile function is called from parallel threads.
@@ -834,7 +934,10 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
         // compiled, use the cached binary and return without running the compiler.
         if (job.index == kDefaultShaderIndex)
         {
-            if (auto iter = shaderBinaryCache.find(_optionsSource); iter != shaderBinaryCache.end())
+#if AU_DEV_MULTITHREAD_COMPILATION
+            lock_guard<mutex> lock(shaderBinaryCacheMutex);
+#endif
+            if (const auto& iter = shaderBinaryCache.find(_optionsSource); iter != shaderBinaryCache.end())
             {
                 _compiledShaders[job.index].binary = iter->second;
                 return;
@@ -867,8 +970,21 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
         // Run the transpiler
         string transpilerErrors;
         string transpiledHLSL;
+        std::map<string, string> preprocessorMacros;
+#if defined(ENABLE_DENOISER)
+        preprocessorMacros.insert({ "ENABLE_NRD", "1"});
+#else
+        preprocessorMacros.insert({ "ENABLE_NRD", "0"});
+#endif
+
+        // NOTE: the MDL preprocessor symbol is intentionally NOT injected
+        // globally here. It is defined per-job inside job.code (see
+        // setupCompileJobForShader) only for shaders that actually carry
+        // MDL-generated code; defining it globally would wrongly enable the
+        // MDL code paths in the built-in "Default"/shared shaders, whose
+        // job has no MDL types or functions and would fail to compile.
         if (!pTranspiler->transpileCode(
-                job.code, transpiledHLSL, transpilerErrors, Transpiler::Language::HLSL))
+                job.code, transpiledHLSL, transpilerErrors, Transpiler::Language::HLSL, preprocessorMacros))
         {
             AU_ERROR("Slang transpiling error log:\n%s", transpilerErrors.c_str());
             AU_DEBUG_BREAK();
@@ -888,6 +1004,12 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
         // Compile the HLSL source for this shader.
         ComPtr<IDxcBlob> compiledShader;
         vector<pair<wstring, string>> defines = { { L"DIRECTX", "1" } };
+#if defined(ENABLE_DENOISER)
+        defines.push_back({ L"ENABLE_NRD", "1"});
+#else
+        defines.push_back({ L"ENABLE_NRD", "0"});
+#endif
+
         string errorMessage;
         if (!compileLibrary(_pDXCLibrary,
                 transpiledHLSL.c_str(), // Source code string.
@@ -918,6 +1040,9 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
             _compiledShaders[job.index].binary = compiledShader;
             if (job.index == kDefaultShaderIndex)
             {
+#if AU_DEV_MULTITHREAD_COMPILATION
+                lock_guard<mutex> lock(shaderBinaryCacheMutex);
+#endif
                 shaderBinaryCache[_optionsSource] = compiledShader;
             }
         }
@@ -943,6 +1068,7 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
 #endif
     float compEnd = _timer.elapsed();
 
+#if !ENABLE_MDL
     // Build array of all the shader binaries (not just the ones compiled this frame) and names for
     // linking.
     vector<ComPtr<IDxcBlob>> shadersToLink;
@@ -991,48 +1117,173 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
     // Create bytecode from compiled blob.
     D3D12_SHADER_BYTECODE shaderByteCode =
         CD3DX12_SHADER_BYTECODE(linkedShader->GetBufferPointer(), linkedShader->GetBufferSize());
+#endif // ENABLE_MDL
+
+#if AU_DEV_MULTITHREAD_COMPILATION && ENABLE_MDL
+    std::vector<ID3D12StateObjectPtr> psoCollections;
+    psoCollections.resize(_compiledShaders.size());
+    std::vector<size_t> indexRange(_compiledShaders.size());
+    std::iota(indexRange.begin(), indexRange.end(), 0);
+
+    float plStart = _timer.elapsed();
+    for_each(execution::par, indexRange.begin(), indexRange.end(), [&](size_t shaderIndex) {
+        // Prepare an empty pipeline state object description.
+        CD3DX12_STATE_OBJECT_DESC pipelineStateDesc(D3D12_STATE_OBJECT_TYPE_COLLECTION);
+
+        // Create a pipeline configuration subobject, which simply specifies the recursion depth.
+        auto* pPipelineConfigSubobject =
+            pipelineStateDesc.CreateSubobject<CD3DX12_RAYTRACING_PIPELINE_CONFIG_SUBOBJECT>();
+        pPipelineConfigSubobject->Config(2); // Direct and shadow ray
+
+        // Create a DXIL library subobjects for each compiled shader library
+        // NOTE: Shaders are not subobjects, but the library containing them is a subobject. All of
+        // the shader entry points are exported by default; if only specific entry points should be
+        // exported, then DefineExport() on the subobject should be used. A slot can exist with no 
+        // binary, skip null blobs (uncompiled shaders) and dereference the valid ones.
+        if (shaderIndex < _compiledShaders.size() && _compiledShaders[shaderIndex].binary)
+        {
+            auto* pLibrarySubObject =
+                pipelineStateDesc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
+            auto shaderBinary                    = _compiledShaders[shaderIndex].binary;
+            D3D12_SHADER_BYTECODE shaderByteCode = CD3DX12_SHADER_BYTECODE(
+                shaderBinary->GetBufferPointer(), shaderBinary->GetBufferSize());
+            pLibrarySubObject->SetDXILLibrary(&shaderByteCode);
+        }
+
+        // Create a shader configuration subobject, which indicates the maximum sizes of the ray
+        // payload (as defined in the RayTrace.slang; in the ray payload structs
+        // "InstanceRayPayload" and "ShadowRayPayload") and intersection attributes (UV barycentric
+        // coordinates). If the structures used in the shader exceed these values the result will be
+        // a rendering failure.
+        const unsigned int kRayPayloadSize   = 16 * sizeof(float) + 3 * sizeof(uint32_t);
+        const unsigned int kIntersectionSize = 2 * sizeof(float);
+        auto* pShaderConfigSubobject =
+            pipelineStateDesc.CreateSubobject<CD3DX12_RAYTRACING_SHADER_CONFIG_SUBOBJECT>();
+        pShaderConfigSubobject->Config(kRayPayloadSize, kIntersectionSize);
+
+        // NOTE: The shader configuration is assumed to apply to all shaders, so it is *not*
+        // associated with specific shaders (which would use
+        // CD3DX12_SUBOBJECT_TO_EXPORTS_ASSOCIATION_SUBOBJECT).
+
+        // Create the global root signature subobject.
+        auto* pGlobalRootSignatureSubobject =
+            pipelineStateDesc.CreateSubobject<CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT>();
+        pGlobalRootSignatureSubobject->SetRootSignature(_pGlobalRootSignature.Get());
+
+        // Create hit group use by all instances (required even if only has miss shader.)
+        auto* pInstanceClosestHitRootSigSubobject =
+            pipelineStateDesc.CreateSubobject<CD3DX12_LOCAL_ROOT_SIGNATURE_SUBOBJECT>();
+        pInstanceClosestHitRootSigSubobject->SetRootSignature(_pInstanceHitRootSignature.Get());
+        auto* pAssociationSubobject =
+            pipelineStateDesc.CreateSubobject<CD3DX12_SUBOBJECT_TO_EXPORTS_ASSOCIATION_SUBOBJECT>();
+        pAssociationSubobject->SetSubobjectToAssociate(*pInstanceClosestHitRootSigSubobject);
+
+        // Create a DXR hit group for each shader.
+        MaterialShaderPtr pShader = _shaderLibrary.get((int)shaderIndex);
+        if (pShader)
+        {
+            // Add hit group for material
+            wstring hitGroupName = kInstanceHitGroupNamePrefix + Foundation::s2w(pShader->id());
+            wstring closestHitEntryName =
+                kInstanceClosestHitEntryPointNamePrefix + Foundation::s2w(pShader->id());
+            wstring anyHitEntryName =
+                kInstanceShadowAnyHitEntryPointNamePrefix + Foundation::s2w(pShader->id());
+
+            auto* pShaderSubobject =
+                pipelineStateDesc.CreateSubobject<CD3DX12_HIT_GROUP_SUBOBJECT>();
+            pShaderSubobject->SetHitGroupExport(hitGroupName.c_str());
+            pShaderSubobject->SetClosestHitShaderImport(closestHitEntryName.c_str());
+            pShaderSubobject->SetAnyHitShaderImport(anyHitEntryName.c_str());
+            pShaderSubobject->SetHitGroupType(D3D12_HIT_GROUP_TYPE_TRIANGLES);
+            pAssociationSubobject->AddExport(hitGroupName.c_str());
+        }
+
+        // Create the pipeline state object from the description.
+        ID3D12StateObjectPtr collection;
+        checkHR(_pDXDevice->CreateStateObject(pipelineStateDesc, IID_PPV_ARGS(&collection)));
+
+        psoCollections[shaderIndex] = collection;
+    });
 
     // Prepare an empty pipeline state object description.
     CD3DX12_STATE_OBJECT_DESC pipelineStateDesc(D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE);
 
     // Create a pipeline configuration subobject, which simply specifies the recursion depth.
-    // NOTE: The recursion depth is set to 1 as we are using a non-recursive model with entire path
-    // traced in the ray generation shader without recursion.
     auto* pPipelineConfigSubobject =
         pipelineStateDesc.CreateSubobject<CD3DX12_RAYTRACING_PIPELINE_CONFIG_SUBOBJECT>();
-    pPipelineConfigSubobject->Config(1);
+    pPipelineConfigSubobject->Config(2); // Direct and shadow ray
 
-    // Create a DXIL library subobject.
+    // Create hit group use by all instances (required even if only has miss shader.)
+    auto* pInstanceClosestHitRootSigSubobject =
+        pipelineStateDesc.CreateSubobject<CD3DX12_LOCAL_ROOT_SIGNATURE_SUBOBJECT>();
+    pInstanceClosestHitRootSigSubobject->SetRootSignature(_pInstanceHitRootSignature.Get());
+    auto* pAssociationSubobject =
+        pipelineStateDesc.CreateSubobject<CD3DX12_SUBOBJECT_TO_EXPORTS_ASSOCIATION_SUBOBJECT>();
+    pAssociationSubobject->SetSubobjectToAssociate(*pInstanceClosestHitRootSigSubobject);
+
+    // Create a DXIL library subobjects for each compiled shader library
+    // NOTE: Shaders are not subobjects, but the library containing them is a subobject. All of
+    // the shader entry points are exported by default; if only specific entry points should be
+    // exported, then DefineExport() on the subobject should be used.
+    for (auto& psoCollection : psoCollections)
+    {
+        auto* pCollectionSubObject =
+            pipelineStateDesc.CreateSubobject<CD3DX12_EXISTING_COLLECTION_SUBOBJECT>();
+        pCollectionSubObject->SetExistingCollection(psoCollection.Get());
+    }
+
+    // Create a shader configuration subobject, which indicates the maximum sizes of the ray
+    // payload (as defined in the RayTrace.slang; in the ray payload structs
+    // "InstanceRayPayload" and "ShadowRayPayload") and intersection attributes (UV barycentric
+    // coordinates). If the structures used in the shader exceed these values the result will be
+    // a rendering failure.
+    const unsigned int kRayPayloadSize   = 16 * sizeof(float) + 3 * sizeof(uint32_t);
+    const unsigned int kIntersectionSize = 2 * sizeof(float);
+    auto* pShaderConfigSubobject =
+        pipelineStateDesc.CreateSubobject<CD3DX12_RAYTRACING_SHADER_CONFIG_SUBOBJECT>();
+    pShaderConfigSubobject->Config(kRayPayloadSize, kIntersectionSize);
+
+    // Create the pipeline state object from the description.
+    checkHR(_pDXDevice->CreateStateObject(pipelineStateDesc, IID_PPV_ARGS(&_pPipelineState)));
+    float plEnd = _timer.elapsed();
+
+    int activeShaders = (int)_compiledShaders.size();
+#else
+    // Prepare an empty pipeline state object description.
+    CD3DX12_STATE_OBJECT_DESC pipelineStateDesc(D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE);
+
+    // Create a pipeline configuration subobject, which simply specifies the recursion depth.
+    auto* pPipelineConfigSubobject =
+        pipelineStateDesc.CreateSubobject<CD3DX12_RAYTRACING_PIPELINE_CONFIG_SUBOBJECT>();
+    pPipelineConfigSubobject->Config(2); // Direct and shadow ray
+
+#if ENABLE_MDL
+    // Create a DXIL library subobjects for each compiled shader library
     // NOTE: Shaders are not subobjects, but the library containing them is a subobject. All of the
     // shader entry points are exported by default; if only specific entry points should be
     // exported, then DefineExport() on the subobject should be used.
-    auto* pLibrarySubObject = pipelineStateDesc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
+    for (size_t i = 0; i < _compiledShaders.size(); i++)
+    {
+        auto* pLibrarySubObject =
+            pipelineStateDesc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
 
+        auto shaderBinary                    = _compiledShaders[i].binary;
+        D3D12_SHADER_BYTECODE shaderByteCode = CD3DX12_SHADER_BYTECODE(
+            shaderBinary->GetBufferPointer(), shaderBinary->GetBufferSize());
+        pLibrarySubObject->SetDXILLibrary(&shaderByteCode);
+    }
+#else
+    auto* pLibrarySubObject = pipelineStateDesc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
     // Set DXIL library object bytecode.
     pLibrarySubObject->SetDXILLibrary(&shaderByteCode);
-
-    // Check shader material compatibility structure using reflection.
-    // Get the DXC blob compiled in compileShader.
-    IDxcBlob* pBlob = linkedShader.Get();
-
-    // Create a container reflection object from the blob.
-    ComPtr<IDxcContainerReflection> pContainerReflection;
-    DxcCreateInstance(
-        CLSID_DxcContainerReflection, IID_PPV_ARGS(pContainerReflection.GetAddressOf()));
-    pContainerReflection->Load(pBlob);
-
-    // Find the DXIL reflection object within the container.
-    UINT32 shaderIdx;
-    pContainerReflection->FindFirstPartKind(MAKEFOURCC('D', 'X', 'I', 'L'), &shaderIdx);
-    pContainerReflection->GetPartReflection(
-        shaderIdx, __uuidof(ID3D12LibraryReflection), (void**)&_pShaderLibraryReflection);
+#endif
 
     // Create a shader configuration subobject, which indicates the maximum sizes of the ray payload
     // (as defined in the RayTrace.slang; in the ray payload structs "InstanceRayPayload" and
     // "ShadowRayPayload") and intersection attributes (UV barycentric coordinates).
     // If the structures used in the shader exceed these values the result will be a rendering
     // failure.
-    const unsigned int kRayPayloadSize   = 19 * sizeof(float);
+    const unsigned int kRayPayloadSize   = 16 * sizeof(float) + 3 * sizeof(uint32_t);
     const unsigned int kIntersectionSize = 2 * sizeof(float);
     auto* pShaderConfigSubobject =
         pipelineStateDesc.CreateSubobject<CD3DX12_RAYTRACING_SHADER_CONFIG_SUBOBJECT>();
@@ -1047,34 +1298,13 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
         pipelineStateDesc.CreateSubobject<CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT>();
     pGlobalRootSignatureSubobject->SetRootSignature(_pGlobalRootSignature.Get());
 
-    // Create the local root signature subobject associated with the ray generation shader (which is
-    // compiled with the default builtin shader)
-    auto* pRayGenRootSignatureSubobject =
-        pipelineStateDesc.CreateSubobject<CD3DX12_LOCAL_ROOT_SIGNATURE_SUBOBJECT>();
-    pRayGenRootSignatureSubobject->SetRootSignature(_pRayGenRootSignature.Get());
-    auto* pAssociationSubobject =
-        pipelineStateDesc.CreateSubobject<CD3DX12_SUBOBJECT_TO_EXPORTS_ASSOCIATION_SUBOBJECT>();
-    pAssociationSubobject->SetSubobjectToAssociate(*pRayGenRootSignatureSubobject);
-    pAssociationSubobject->AddExport(kRayGenEntryPointName);
-
     // Create hit group use by all instances (required even if only has miss shader.)
     auto* pInstanceClosestHitRootSigSubobject =
         pipelineStateDesc.CreateSubobject<CD3DX12_LOCAL_ROOT_SIGNATURE_SUBOBJECT>();
     pInstanceClosestHitRootSigSubobject->SetRootSignature(_pInstanceHitRootSignature.Get());
-    pAssociationSubobject =
+    auto* pAssociationSubobject =
         pipelineStateDesc.CreateSubobject<CD3DX12_SUBOBJECT_TO_EXPORTS_ASSOCIATION_SUBOBJECT>();
     pAssociationSubobject->SetSubobjectToAssociate(*pInstanceClosestHitRootSigSubobject);
-    pAssociationSubobject->AddExport(kInstanceClosestHitEntryPointName);
-
-    auto* pInstanceShaderSubobject =
-        pipelineStateDesc.CreateSubobject<CD3DX12_HIT_GROUP_SUBOBJECT>();
-    pInstanceShaderSubobject->SetHitGroupExport(kInstanceHitGroupName);
-
-    pInstanceShaderSubobject->SetClosestHitShaderImport(kInstanceClosestHitEntryPointName);
-    pInstanceShaderSubobject->SetAnyHitShaderImport(kInstanceShadowAnyHitEntryPointName);
-    pInstanceShaderSubobject->SetHitGroupType(D3D12_HIT_GROUP_TYPE_TRIANGLES);
-
-    pAssociationSubobject->AddExport(kInstanceHitGroupName);
 
     // Keep track of number of active shaders.
     int activeShaders = 0;
@@ -1086,8 +1316,29 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
         MaterialShaderPtr pShader = _shaderLibrary.get(i);
         if (pShader)
         {
+            // Add hit group for material
+            wstring hitGroupName = kInstanceHitGroupNamePrefix + Foundation::s2w(pShader->id());
+            wstring closestHitEntryName =
+                kInstanceClosestHitEntryPointNamePrefix + Foundation::s2w(pShader->id());
+            wstring anyHitEntryName =
+                kInstanceShadowAnyHitEntryPointNamePrefix + Foundation::s2w(pShader->id());
+
+            auto* pShaderSubobject =
+                pipelineStateDesc.CreateSubobject<CD3DX12_HIT_GROUP_SUBOBJECT>();
+            pShaderSubobject->SetHitGroupExport(hitGroupName.c_str());
+            pShaderSubobject->SetClosestHitShaderImport(closestHitEntryName.c_str());
+            pShaderSubobject->SetAnyHitShaderImport(anyHitEntryName.c_str());
+            pShaderSubobject->SetHitGroupType(D3D12_HIT_GROUP_TYPE_TRIANGLES);
+            pAssociationSubobject->AddExport(hitGroupName.c_str());
+
+        #if !ENABLE_MDL
+            activeShaders = (int)_compiledShaders.size();
+            // First shader will be the default shader. The only shader with entry points if MDL is disabled.
+            break;
+        #else
             // Increment active shader.
             activeShaders++;
+        #endif
         }
     }
 
@@ -1095,6 +1346,7 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
     float plStart = _timer.elapsed();
     checkHR(_pDXDevice->CreateStateObject(pipelineStateDesc, IID_PPV_ARGS(&_pPipelineState)));
     float plEnd = _timer.elapsed();
+#endif
 
     // Get the total time taken to rebuild.
     // TODO: This should go into a stats property set and exposed to client properly.
@@ -1105,8 +1357,10 @@ void PTShaderLibrary::rebuild(int globalTextureCount, int globalSamplerCount)
         static_cast<int>(elapsedMillisec));
     AU_INFO("  - Slang session creation took %d ms", static_cast<int>(scEnd - scStart));
     AU_INFO("  - Transpilation and DXC compile took %d ms", static_cast<int>(compEnd - compStart));
+#if !ENABLE_MDL
     AU_INFO(
         "  - DXC link took %d ms (Hash:%llx)", static_cast<int>(linkEnd - linkStart), libraryHash);
+#endif
     AU_INFO("  - Pipeline creation took %d ms", static_cast<int>(plEnd - plStart));
 }
 

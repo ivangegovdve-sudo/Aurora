@@ -7,17 +7,8 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
     message(FATAL_ERROR "In-source build is not allowed!")
 endif()
 
-# See if USD was built with python.
-find_library(USD_usdviewq_LIBRARY_RELEASE usd_usdviewq)
-find_library(USD_usdviewq_LIBRARY_DEBUG usd_usdviewqd)
-if(USD_usdviewq_LIBRARY_RELEASE OR USD_usdviewq_LIBRARY_DEBUG)
-  # iF USDView is found, then we know USD was built with python.
-  set(USD_BUILT_WITH_PYTHON "True")
-  message(STATUS "USD built with Python, system Python libraries required.")
-endif()
-
 # Set the project name and project variables
-project(Aurora VERSION 25.08.0.0)
+project(Aurora VERSION 26.08.0.0)
 
 # Create a folder for the version header files
 set(VERSION_FOLDER "${PROJECT_BINARY_DIR}/VersionFiles")
@@ -60,19 +51,10 @@ list(APPEND CMAKE_MODULE_PATH
     "${SCRIPTS_DIR}/cmake/modules"
 )
 
-# XXX: Aurora does not support USDView on MacOS for now.
-if(APPLE)
-    set(ENABLE_USDVIEW OFF)
-else()
-    option(ENABLE_USDVIEW "Build usdview with python" ON)
-endif()
+# Build usdview with python support.
+option(ENABLE_USDVIEW "Build usdview with python" ON)
 
-# XXX: Temporarily disable unit tests for Linux.
-if(WIN32 OR APPLE)
-    option(ENABLE_TESTS "Build unit tests" ON)
-else()
-    set(ENABLE_TESTS OFF)
-endif()
+option(ENABLE_TESTS "Build unit tests" ON)
 option(ENABLE_APPLICATIONS "Build Applications" ON)
 
 # Import the cmake utility functions
@@ -99,8 +81,13 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
     # Add warning level 4 and warnings as errors
     add_compile_options(/W4 /WX -wd4068) # -wd4068 disables unknown-pragmas warnings
-    # Enable multiple-processor compilation
-    add_compile_options(/MP)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        # Enable multiple-processor compilation. clang-cl also matches MSVC here but accepts
+        # and ignores /MP, which /WX then turns into an unused-argument error.
+        add_compile_options(/MP)
+    endif()
+    # Required by the fmt library vendored into OpenImageIO 3.1.
+    add_compile_options(/utf-8)
     # Add INSTALL project to solution by default.
     set(CMAKE_VS_INCLUDE_INSTALL_TO_DEFAULT_BUILD 1)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -116,6 +103,16 @@ if (NOT EXTERNALS_CONFIG AND DEFINED EXTERNALS_ROOT)
 endif()
 if (EXTERNALS_CONFIG)
     message(STATUS "Load externals config file: ${EXTERNALS_CONFIG}")
+
+    # See if USD was built with python. This has to come after the externals config, which is
+    # what puts the USD install on the search path; probing earlier always reported NOTFOUND.
+    find_library(USD_usdviewq_LIBRARY_RELEASE usd_usdviewq HINTS "${pxr_ROOT}/lib")
+    find_library(USD_usdviewq_LIBRARY_DEBUG usd_usdviewqd HINTS "${pxr_ROOT}/lib")
+    if(USD_usdviewq_LIBRARY_RELEASE OR USD_usdviewq_LIBRARY_DEBUG)
+        # If usdviewq is found, then we know USD was built with python.
+        set(USD_BUILT_WITH_PYTHON "True")
+        message(STATUS "USD built with Python, system Python libraries required.")
+    endif()
 else()
     message(FATAL_ERROR "Failed to load externals config file. If you have run `installExternals.py` from an early release, please re-run the script to generate the externals and the config file. Run `python Scripts/installExternals.py -h` to learn more options.")
 endif()
@@ -129,6 +126,22 @@ else()
     set(ENABLE_DIRECTX_BACKEND OFF)
     # Always enable HGI backend on non-Windows platforms
     set(ENABLE_HGI_BACKEND ON)
+endif()
+
+if(UNIX AND NOT APPLE)
+    # Linux needs RPATH for gtest_discover_tests to find shared libraries at build time.
+    set(AURORA_RPATH "${PROJECT_BINARY_DIR}/lib/${CMAKE_BUILD_TYPE}")
+    if(DEFINED EXTERNALS_ROOT)
+        file(GLOB AURORA_EXTERNAL_LIB_DIRS LIST_DIRECTORIES true
+             "${EXTERNALS_ROOT}/*/lib" "${EXTERNALS_ROOT}/*/lib64")
+        foreach(dir ${AURORA_EXTERNAL_LIB_DIRS})
+            if(IS_DIRECTORY "${dir}")
+                list(APPEND AURORA_RPATH "${dir}")
+            endif()
+        endforeach()
+    endif()
+    set(CMAKE_BUILD_RPATH "${AURORA_RPATH}")
+    set(CMAKE_INSTALL_RPATH "${AURORA_RPATH}")
 endif()
 
 add_subdirectory(Libraries)

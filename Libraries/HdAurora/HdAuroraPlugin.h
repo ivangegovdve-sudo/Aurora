@@ -27,7 +27,11 @@ public:
 
 // The extra arguments to IsSupported were added with Hydra version 46. As we need to support
 // both USD 24.08 and older versions, make arguments conditional at compile time.
-#if HD_API_VERSION >= 46
+// USD v26.08 changed the signature again: IsSupported now takes HdRendererCreateArgsSchema.
+#if PXR_VERSION >= 2608
+    bool IsSupported(const HdRendererCreateArgsSchema& rendererCreateArgs,
+                     std::string* reasonWhyNot = nullptr) const override;
+#elif HD_API_VERSION >= 46
     virtual bool IsSupported(bool gpuEnabled = true) const override;
 #else
     bool IsSupported() const override;

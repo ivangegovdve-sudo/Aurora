@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<materialx version="1.38">
+  <adsk:metal name="BrassOld_shader" type="surfaceshader">
+    <input name="metal_f0" type="color3" output="metal_f0_map_output" nodegraph="BrassOld_inputGraph" />
+    <input name="surface_albedo" type="color3" output="surface_albedo_map_output" nodegraph="BrassOld_inputGraph" />
+    <input name="surface_roughness" type="float" output="surface_roughness_map_output" nodegraph="BrassOld_inputGraph" />
+    <input name="surface_anisotropy" type="float" value="0" />
+    <input name="surface_rotation" type="float" value="0" />
+    <input name="surface_normal" type="vector3" output="surface_normal_map_output" nodegraph="BrassOld_inputGraph" />
+  </adsk:metal>
+  <surfacematerial name="BrassOld" type="material" uiname="Prism-334">
+    <input name="surfaceshader" type="surfaceshader" nodename="BrassOld_shader" />
+  </surfacematerial>
+  <nodegraph name="BrassOld_inputGraph">
+    <adsk:bitmap name="metal_f0_texture" type="color3">
+      <input name="file" type="filename" value="BrassOld/brass_old_color.jpg" colorspace="srgb_texture" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="4, 4" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="metal_f0_map_output" type="color3" nodename="metal_f0_texture" />
+    <adsk:bitmap name="surface_albedo_texture" type="color3">
+      <input name="file" type="filename" value="BrassOld/brass_old_spec.jpg" colorspace="srgb_texture" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="4, 4" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="surface_albedo_map_output" type="color3" nodename="surface_albedo_texture" />
+    <adsk:bitmap name="surface_roughness_texture" type="float">
+      <input name="file" type="filename" value="BrassOld/brass_old_rough.jpg" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="4, 4" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="rotation_angle" type="float" value="0" />
+      <input name="rgbamount" type="float" value="1" />
+      <input name="invert" type="boolean" value="false" />
+    </adsk:bitmap>
+    <output name="surface_roughness_map_output" type="float" nodename="surface_roughness_texture" />
+    <adsk:height_map name="surface_normal_texture" type="vector3">
+      <input name="file" type="filename" value="BrassOld/brass_old_bump.png" colorspace="lin_rec709" />
+      <input name="realworld_offset" type="vector2" value="0, 0" unit="inch" unittype="distance" />
+      <input name="realworld_scale" type="vector2" value="4, 4" unit="inch" unittype="distance" />
+      <input name="uv_offset" type="vector2" value="0, 0" />
+      <input name="uv_scale" type="vector2" value="1, 1" />
+      <input name="depth" type="float" value="0.002" unit="inch" unittype="distance" />
+      <input name="rotation_angle" type="float" value="0" />
+    </adsk:height_map>
+    <output name="surface_normal_map_output" type="vector3" nodename="surface_normal_texture" />
+  </nodegraph>
+</materialx>

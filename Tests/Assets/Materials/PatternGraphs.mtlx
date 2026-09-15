@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<!-- Test file: custom checker pattern implemented as a MaterialX nodegraph. -->
+<materialx version="1.39" colorspace="lin_rec709">
+
+  <!-- Checker nodedef: returns 0.0 or 1.0 in a tiled checker pattern. -->
+  <nodedef name="ND_checker_float" node="checker">
+    <input name="scale" type="vector2" value="8.0, 8.0" />
+    <output name="out" type="float" />
+  </nodedef>
+  <nodegraph name="NG_checker_float" nodedef="ND_checker_float">
+    <texcoord name="texcoord1" type="vector2">
+      <input name="index" type="integer" value="0" />
+    </texcoord>
+    <multiply name="mult1" type="vector2">
+      <input name="in1" type="vector2" nodename="texcoord1" />
+      <input name="in2" type="vector2" interfacename="scale" />
+    </multiply>
+    <extract name="swizz_x" type="float">
+      <input name="in" type="vector2" nodename="mult1" />
+      <input name="index" type="integer" value="0" />
+    </extract>
+    <extract name="swizz_y" type="float">
+      <input name="in" type="vector2" nodename="mult1" />
+      <input name="index" type="integer" value="1" />
+    </extract>
+    <floor name="floor1" type="float">
+      <input name="in" type="float" nodename="swizz_x" />
+    </floor>
+    <floor name="floor2" type="float">
+      <input name="in" type="float" nodename="swizz_y" />
+    </floor>
+    <add name="add1" type="float">
+      <input name="in1" type="float" nodename="floor1" />
+      <input name="in2" type="float" nodename="floor2" />
+    </add>
+    <modulo name="mod1" type="float">
+      <input name="in1" type="float" nodename="add1" />
+      <input name="in2" type="float" value="2.0" />
+    </modulo>
+    <output name="out" type="float" nodename="mod1" />
+  </nodegraph>
+
+  <!-- Fine (32×32) checker instance — used by PatternMat1. -->
+  <checker name="checker1" type="float">
+    <input name="scale" type="vector2" value="32.0, 32.0" />
+  </checker>
+
+  <!-- Coarse (2×2) checker instance — used by PatternMat2. -->
+  <checker name="checker2" type="float">
+    <input name="scale" type="vector2" value="2.0, 2.0" />
+  </checker>
+
+  <!-- PatternMat1: fine red/white checker — rendered on the plane. -->
+  <mix name="checker1_color" type="color3">
+    <input name="fg"  type="color3" value="0.9, 0.1, 0.1" />
+    <input name="bg"  type="color3" value="0.9, 0.9, 0.9" />
+    <input name="mix" type="float"  nodename="checker1" />
+  </mix>
+  <standard_surface name="PatternMat1_shader" type="surfaceshader" version="1.0.1">
+    <input name="base"               type="float"  value="1" />
+    <input name="base_color"         type="color3" nodename="checker1_color" />
+    <input name="specular_roughness" type="float"  value="0.4" />
+  </standard_surface>
+  <surfacematerial name="PatternMat1" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="PatternMat1_shader" />
+  </surfacematerial>
+
+  <!-- PatternMat2: coarse blue/white checker — rendered on the teapot. -->
+  <mix name="checker2_color" type="color3">
+    <input name="fg"  type="color3" value="0.1, 0.1, 0.9" />
+    <input name="bg"  type="color3" value="0.9, 0.9, 0.9" />
+    <input name="mix" type="float"  nodename="checker2" />
+  </mix>
+  <standard_surface name="PatternMat2_shader" type="surfaceshader" version="1.0.1">
+    <input name="base"               type="float"  value="1" />
+    <input name="base_color"         type="color3" nodename="checker2_color" />
+    <input name="specular_roughness" type="float"  value="0.4" />
+  </standard_surface>
+  <surfacematerial name="PatternMat2" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="PatternMat2_shader" />
+  </surfacematerial>
+
+</materialx>

@@ -1,0 +1,130 @@
+diff --git a/src/cmake/build_minizip-ng.cmake b/src/cmake/build_minizip-ng.cmake
+index eddc034..eaa51af 100644
+--- a/src/cmake/build_minizip-ng.cmake
++++ b/src/cmake/build_minizip-ng.cmake
+@@ -18,6 +18,12 @@ set_cache (minizip-ng_BUILD_SHARED_LIBS OFF
+ checked_find_package (ZLIB REQUIRED)
+ 
+ 
++if (ZLIB_LIBRARIES)
++    string(REPLACE ";" "|" ZLIB_LIBRARIES_ESCAPED "${ZLIB_LIBRARIES}")
++endif()
++if (ZLIB_INCLUDE_DIRS)
++    string(REPLACE ";" "|" ZLIB_INCLUDE_DIRS_ESCAPED "${ZLIB_INCLUDE_DIRS}")
++endif()
+ build_dependency_with_cmake(minizip-ng
+     VERSION         ${minizip-ng_BUILD_VERSION}
+     GIT_REPOSITORY  ${minizip-ng_GIT_REPOSITORY}
+@@ -27,11 +33,6 @@ build_dependency_with_cmake(minizip-ng
+         -D BUILD_SHARED_LIBS=${minizip-ng_BUILD_SHARED_LIBS}
+         -D CMAKE_POSITION_INDEPENDENT_CODE=ON
+         -D CMAKE_INSTALL_LIBDIR=lib
+-        # Since the other modules create a subfolder for the includes by default and since
+-        # minizip-ng does not, a suffix is added to CMAKE_INSTALL_INCLUDEDIR in order to
+-        # install the headers under a subdirectory named "minizip-ng".
+-        # Note that this does not affect external builds for minizip-ng.
+-        -D CMAKE_INSTALL_INCLUDEDIR=${CMAKE_INSTALL_INCLUDEDIR}/minizip-ng
+         -D MZ_OPENSSL=OFF
+         -D MZ_LIBBSD=OFF
+         -D MZ_BUILD_TESTS=OFF
+@@ -47,13 +48,44 @@ build_dependency_with_cmake(minizip-ng
+         -D MZ_ICONV=OFF
+         -D MZ_FETCH_LIBS=OFF
+         -D MZ_FORCE_FETCH_LIBS=OFF
+-        -D ZLIB_LIBRARY=${ZLIB_LIBRARIES}
+-        -D ZLIB_INCLUDE_DIR=${ZLIB_INCLUDE_DIRS}
++        -D ZLIB_LIBRARY=${ZLIB_LIBRARIES_ESCAPED}
++        -D ZLIB_INCLUDE_DIR=${ZLIB_INCLUDE_DIRS_ESCAPED}
+     )
+ 
+ 
+-set (minizip-ng_DIR ${minizip-ng_LOCAL_INSTALL_DIR}/lib/cmake/minizip-ng)
++set (_minizip-ng_CONFIG_DIR ${minizip-ng_LOCAL_INSTALL_DIR}/lib/cmake/minizip)
++set (_minizip-ng_LIB_DIR ${minizip-ng_LOCAL_INSTALL_DIR}/lib)
++set (minizip-ng_DIR ${_minizip-ng_CONFIG_DIR})
+ set (minizip-ng_VERSION ${minizip-ng_BUILD_VERSION})
+ set (minizip-ng_REFIND TRUE)
+ set (minizip-ng_REFIND_VERSION ${minizip-ng_BUILD_VERSION})
+ set (minizip-ng_REFIND_ARGS REQUIRED)
++if (EXISTS "${_minizip-ng_CONFIG_DIR}/minizip-config.cmake")
++    file(READ "${_minizip-ng_CONFIG_DIR}/minizip-config.cmake" _mz_cfg)
++    string(REPLACE "find_dependency(BZip2)" "" _mz_cfg "${_mz_cfg}")
++    string(REPLACE "find_dependency(LibLZMA)" "" _mz_cfg "${_mz_cfg}")
++    string(REPLACE "find_dependency(zstd)" "" _mz_cfg "${_mz_cfg}")
++    string(REPLACE "find_dependency(OpenSSL)" "" _mz_cfg "${_mz_cfg}")
++    string(REPLACE "find_dependency(Iconv)" "" _mz_cfg "${_mz_cfg}")
++    file(WRITE "${_minizip-ng_CONFIG_DIR}/minizip-config.cmake" "${_mz_cfg}")
++endif()
++if (EXISTS "${_minizip-ng_CONFIG_DIR}/minizip-config.cmake"
++        AND NOT EXISTS "${_minizip-ng_CONFIG_DIR}/minizip-ng-config.cmake")
++    file(WRITE "${_minizip-ng_CONFIG_DIR}/minizip-ng-config.cmake"
++         "include(\"${CMAKE_CURRENT_LIST_DIR}/minizip-config.cmake\")\n"
++         "if(TARGET MINIZIP::minizip AND NOT TARGET MINIZIP::minizip-ng)\n"
++         "    add_library(MINIZIP::minizip-ng INTERFACE IMPORTED)\n"
++         "    set_target_properties(MINIZIP::minizip-ng PROPERTIES\n"
++         "        INTERFACE_LINK_LIBRARIES MINIZIP::minizip)\n"
++         "endif()\n")
++endif()
++if (EXISTS "${_minizip-ng_CONFIG_DIR}/minizip-config-version.cmake"
++        AND NOT EXISTS "${_minizip-ng_CONFIG_DIR}/minizip-ng-config-version.cmake")
++    file(WRITE "${_minizip-ng_CONFIG_DIR}/minizip-ng-config-version.cmake"
++         "include(\"${CMAKE_CURRENT_LIST_DIR}/minizip-config-version.cmake\")\n")
++endif()
++if (EXISTS "${_minizip-ng_LIB_DIR}/libminizip.a"
++        AND NOT EXISTS "${_minizip-ng_LIB_DIR}/libminizip-ng.a")
++    file(CREATE_LINK "${_minizip-ng_LIB_DIR}/libminizip.a"
++         "${_minizip-ng_LIB_DIR}/libminizip-ng.a" COPY_ON_ERROR)
++endif()
+diff --git a/src/cmake/build_pystring.cmake b/src/cmake/build_pystring.cmake
+index 3ef3c26..282086b 100644
+--- a/src/cmake/build_pystring.cmake
++++ b/src/cmake/build_pystring.cmake
+@@ -11,7 +11,7 @@ set (pystring_GIT_REPOSITORY "https://github.com/imageworks/pystring")
+ # See imageworks/pystring issue #43,  git commit #c5ca4f5
+ # We require pystring commits made after the v1.1.4 tag to properly install headers!
+ # TODO: Set this to "v${pystring_BUILD_VERSION}" once 1.1.5 is released
+-set (pystring_GIT_TAG master)
++set (pystring_GIT_TAG "")
+ set (pystring_GIT_COMMIT "381829c2c1696ffec9277b339952a9588e6e67cf")
+ 
+ set_cache (pystring_BUILD_SHARED_LIBS OFF
+diff --git a/src/cmake/dependency_utils.cmake b/src/cmake/dependency_utils.cmake
+index ab28dde..292072e 100644
+--- a/src/cmake/dependency_utils.cmake
++++ b/src/cmake/dependency_utils.cmake
+@@ -638,8 +638,9 @@ macro (build_dependency_with_cmake pkgname)
+         list (APPEND ${pkgname}_GIT_CLONE_ARGS -b ${_pkg_GIT_TAG} --depth 1)
+     endif ()
+     if (_pkg_QUIET OR "${_pkg_QUIET}" STREQUAL "")
+-        list (APPEND ${pkgname}_GIT_CLONE_ARGS -q ERROR_VARIABLE ${pkgname}_clone_errors)
++        list (APPEND ${pkgname}_GIT_CLONE_ARGS -q)
+         set (_pkg_exec_quiet OUTPUT_QUIET)
++        set (_pkg_exec_error_var ERROR_VARIABLE ${pkgname}_clone_errors)
+     endif ()
+ 
+     # Clone the repo if we don't already have it
+@@ -652,7 +653,8 @@ macro (build_dependency_with_cmake pkgname)
+         execute_process(COMMAND ${GIT_EXECUTABLE} clone ${_pkg_GIT_REPOSITORY}
+                                 ${${pkgname}_LOCAL_SOURCE_DIR}
+                                 ${${pkgname}_GIT_CLONE_ARGS}
+-                        ${_pkg_exec_quiet})
++                        ${_pkg_exec_quiet}
++                        ${_pkg_exec_error_var})
+         if (NOT IS_DIRECTORY ${${pkgname}_LOCAL_SOURCE_DIR})
+             message (FATAL_ERROR "Could not download ${_pkg_GIT_REPOSITORY}: ${${pkgname}_clone_errors}")
+         endif ()
+@@ -730,6 +732,14 @@ macro (build_dependency_with_cmake pkgname)
+         string(REPLACE ";" "\\;" CMAKE_IGNORE_PATH_ESCAPED "${CMAKE_IGNORE_PATH}")
+         list(APPEND _pkg_CMAKE_ARGS "-DCMAKE_IGNORE_PATH=${CMAKE_IGNORE_PATH_ESCAPED}")
+     endif()
++    if (CMAKE_OSX_ARCHITECTURES)
++        string(REPLACE ";" "\\;" CMAKE_OSX_ARCHITECTURES_ESCAPED "${CMAKE_OSX_ARCHITECTURES}")
++        list(APPEND _pkg_CMAKE_ARGS "-DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES_ESCAPED}")
++    endif()
++    if (CMAKE_PREFIX_PATH)
++        string(REPLACE ";" "\\;" CMAKE_PREFIX_PATH_ESCAPED "${CMAKE_PREFIX_PATH}")
++        list(APPEND _pkg_CMAKE_ARGS "-DCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH_ESCAPED}")
++    endif()
+ 
+     # Pass along any CMAKE_MSVC_RUNTIME_LIBRARY
+     if (WIN32 AND CMAKE_MSVC_RUNTIME_LIBRARY)

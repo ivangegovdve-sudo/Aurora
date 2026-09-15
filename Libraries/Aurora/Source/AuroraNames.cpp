@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -57,6 +57,11 @@ const string Names::AddressModes::kMirrorOnce("MirrorOnce");
 
 const string Names::SamplerProperties::kAddressModeU("AddressModeU");
 const string Names::SamplerProperties::kAddressModeV("AddressModeV");
+
+const string Names::UpscalerModes::kNone("None");
+const string Names::UpscalerModes::kDLSS("DLSS");
+const string Names::UpscalerModes::kFSR("FSR");
+const string Names::UpscalerModes::kDLSSRayReconstruction("DLSSRayReconstruction");
 
 const string Names::LightTypes::kDistantLight("DistantLight");
 

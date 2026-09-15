@@ -24,7 +24,7 @@ Below you can learn about features, system requirements, how to build Aurora, ho
 
 ### Operating System
 
-Aurora is officially supported on **Windows 11**, **MacOS 15.5** and **Ubuntu 24.04**. Windows 10/other MacOS versions/other Linux distributions may work, but are not guaranteed.
+Aurora is officially supported on **Windows 11**, **macOS 15.5** and **Ubuntu 24.04**. Windows 10/other macOS versions/other Linux distributions may work, but are not guaranteed.
 
 To run Aurora, the latest GPU drivers from [NVIDIA](https://www.nvidia.com/download/index.aspx), [AMD](https://www.amd.com/en/support), or [Intel](https://www.intel.com/content/www/us/en/download-center/home.html) are recommended as ray tracing API support is being actively improved. No other software is required to run Aurora.
 
@@ -34,7 +34,7 @@ Software required for building Aurora can be found in [the build instructions](D
 
 ### GPU
 
-Aurora requires a GPU with hardware ray tracing support, either through **DirectX Raytracing** (DXR) on Windows, or **Hgi Ray Tracing** on Windows/MacOS/Linux. These include, but are not limited to:
+Aurora requires a GPU with hardware ray tracing support, either through **DirectX Raytracing** (DXR) on Windows, or **Hgi Ray Tracing** on Windows/macOS/Linux. These include, but are not limited to:
 
 - **NVIDIA GPUs with native ray tracing support** include any GPU with "RTX" in the brand name, including mobile GPUs. This includes:
   - The GeForce RTX series, such as the GeForce RTX 2060.
@@ -54,7 +54,9 @@ Aurora requires a GPU with hardware ray tracing support, either through **Direct
 
 See [the build instructions](Doc/Build.md) for information on enabling support for DirectX Raytracing or Hgi Ray Tracing.
 
-NOTE: At this time Vulkan is supported on NVIDIA GPUs only.
+NOTE: Vulkan is primarily validated on NVIDIA GPUs. Software Vulkan paths such as
+lavapipe can still be useful for Linux build and smoke-test coverage, but they
+are much slower than GPU-backed runs.
 
 ## Quick Start
 
@@ -64,31 +66,34 @@ More details on building Aurora can be found [here](Doc/Build.md), including opt
 
 #### Windows
 
-Run the following on a command prompt with compiler tools, such as "x64 Native Tools Command Prompt for VS 2019".
+**Prerequisites:** Visual Studio 2022, CMake 3.29.3+, Python 3.11+. See [the build documentation](Doc/Build.md) for details.
 
-```
-python Scripts\installExternals.py ..\AuroraExternals
-cmake -S . -B Build
+```bat
+python Scripts\installExternals.py ..\AuroraExt\Release
+cmake -S . -B Build -D CMAKE_BUILD_TYPE=Release -D EXTERNALS_ROOT=..\AuroraExt\Release -G "Visual Studio 17 2022" -A x64
 cmake --build Build --config Release
 cd Build\bin\Release
 Plasma.exe
 ```
 
-#### MacOS
+#### macOS
 
-Run the following on the macOS terminal. Xcode and python3 are required.
+**Prerequisites:** Xcode 16.3+ with Command Line Tools, CMake 3.29.3+, Python 3.11+. See [the build documentation](Doc/Build.md) for details.
 
-```
-python3 Scripts/installExternals.py ../AuroraExternals
-cmake -S . -B Build -G Xcode
-xcodebuild -project Build/Aurora.xcodeproj -target Plasma -configuration Release
+```bash
+python3 Scripts/installExternals.py ../AuroraExt/macos/Release --build-target=native
+cmake -S . -B Build -D CMAKE_BUILD_TYPE=Release -D EXTERNALS_ROOT=../AuroraExt/macos/Release -G Xcode
+cmake --build Build --config Release
 cd Build/bin/Release
 open ./Plasma.app
 ```
 
 #### Linux (Ubuntu 24.04)
-```
-python Scripts/installExternals.py ../AuroraExternals
+
+**Prerequisites:** GCC/G++ or Clang, CMake 3.29.3+, Python 3.11+, and system libraries listed in [the build documentation](Doc/Build.md).
+
+```bash
+python3 Scripts/installExternals.py Externals/linux/Release
 cmake -S . -B Build
 cmake --build Build
 cd Build/bin/Release

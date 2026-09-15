@@ -8,4 +8,10 @@ Checks: >
     modernize-make-unique,
     modernize-use-auto,
     modernize-use-default-member-init
+
+# Only diagnose Aurora's own headers.
+HeaderFilterRegex: 'Libraries.(Aurora|HdAurora|Foundation|ImageProcessingResolver).'
+
+# d3dx12.h is Microsoft's DirectX-Headers helper, vendored under Libraries/.
+ExcludeHeaderFilterRegex: 'd3dx12'
 ...

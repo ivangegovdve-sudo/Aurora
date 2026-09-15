@@ -49,7 +49,8 @@ HGIImage::HGIImage(HGIRenderer* pRenderer, const IImage::InitData& initData)
         
         HgiBufferDesc aliasMapDataUboDesc;
         aliasMapDataUboDesc.debugName = "Raytracing alias map global data UBO";
-        aliasMapDataUboDesc.usage     = HgiBufferUsageUniform;
+        // StructuredBuffer requires storage usage bit on Vulkan.
+        aliasMapDataUboDesc.usage     = HgiBufferUsageUniform | HgiBufferUsageStorage;
         aliasMapDataUboDesc.byteSize  = sizeof(AliasMap::Entry) * width * height;
         _pAliasMapBuffer = HgiBufferHandleWrapper::create(pRenderer->hgi()->CreateBuffer(aliasMapDataUboDesc), pRenderer->hgi());
         

@@ -24,6 +24,10 @@ HdAuroraRenderPass::~HdAuroraRenderPass()
 
 bool HdAuroraRenderPass::IsConverged() const
 {
+    // While denoising, _Execute bypasses the sample counter.
+    if (_owner->IsDenoisingEnabled())
+        return _owner->IsDenoisingComplete();
+
     return _owner->GetSampleCounter().isComplete();
 }
 
@@ -188,8 +192,17 @@ void HdAuroraRenderPass::_Execute(
 
     // Render the scene.
     uint32_t sampleStart = 0;
-    uint32_t sampleCount =
-        _owner->GetSampleCounter().update(sampleStart, _owner->SampleRestartNeeded());
+    uint32_t sampleCount = 0;
+    if (_owner->IsDenoisingEnabled())
+    {
+        // One sample per frame as the denoiser accumulates across frames rather than within one.
+        sampleCount = _owner->UpdateDenoisingFrame(_owner->SampleRestartNeeded());
+    }
+    else
+    {
+        sampleCount = _owner->GetSampleCounter().update(sampleStart, _owner->SampleRestartNeeded());
+    }
+
     if (sampleCount > 0)
     {
         _owner->GetRenderer()->render(sampleStart, sampleCount);

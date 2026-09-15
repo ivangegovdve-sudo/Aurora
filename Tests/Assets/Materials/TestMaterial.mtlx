@@ -1,12 +1,13 @@
 <?xml version="1.0" ?>
-<materialx version="1.37">
-  <material name="TestMaterial">
-    <shaderref name="SR_Test1" node="standard_surface">
-      <bindinput name="base" type="float" value="1.0" />
-      <bindinput name="specular" type="float" value="0.5" />
-      <bindinput name="base_color" type="color3" value="0.0, 0.3, 1.0" />
-      <bindinput name="specular_color" type="color3" value="1.0, 0.0, 0.0" />
-      <bindinput name="specular_roughness" type="float" value="0.3" />
-    </shaderref>
-  </material>
-</materialx>"
+<materialx version="1.39">
+  <standard_surface name="SR_Test1" type="surfaceshader">
+    <input name="base" type="float" value="1.0" />
+    <input name="specular" type="float" value="0.5" />
+    <input name="base_color" type="color3" value="0.0, 0.3, 1.0" />
+    <input name="specular_color" type="color3" value="1.0, 0.0, 0.0" />
+    <input name="specular_roughness" type="float" value="0.3" />
+  </standard_surface>
+  <surfacematerial name="TestMaterial" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="SR_Test1" />
+  </surfacematerial>
+</materialx>

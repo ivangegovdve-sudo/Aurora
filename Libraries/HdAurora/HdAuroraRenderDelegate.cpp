@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@
 #include <pxr/imaging/hgi/tokens.h>
 #pragma warning(pop)
 
+#include "HdAuroraAssetPath.h"
 #include "HdAuroraImageCache.h"
 #include "HdAuroraInstancer.h"
 #include "HdAuroraLight.h"
@@ -87,6 +88,7 @@ HdAuroraRenderDelegate::HdAuroraRenderDelegate(HdRenderSettingsMap const& settin
     {
         TF_FATAL_ERROR("HdAurora fails to create renderer!");
     }
+
     // TODO: For long-term, we need an API to set material unit information from client
     // side.
     // Background: "1 ASM unit = 1 cm" in Inventor! Unit section of ASM tutorial mentions
@@ -114,6 +116,35 @@ HdAuroraRenderDelegate::HdAuroraRenderDelegate(HdRenderSettingsMap const& settin
     _auroraRenderer->options().setBoolean("alphaEnabled", false);
     _sampleCounter.setMaxSamples(1000);
     _sampleCounter.reset();
+
+    // Route the resource loading through ArResolver to align MaterialX documents
+    // and textures with stage asset resolution.
+    _auroraRenderer->setLoadResourceFunction(
+        [](const std::string& uri, std::vector<unsigned char>* pBufferOut,
+            std::string* pFileNameOut) {
+            // Empty path indicates an asset cannot place. Fall back to the URI.
+            pxr::ArResolvedPath resolved = pxr::ArGetResolver().Resolve(uri);
+            if (!resolved)
+                resolved = pxr::ArResolvedPath(uri);
+
+            std::shared_ptr<pxr::ArAsset> pAsset = pxr::ArGetResolver().OpenAsset(resolved);
+            if (!pAsset)
+                return false;
+
+            std::shared_ptr<const char> pBuffer = pAsset->GetBuffer();
+            const size_t sizeBytes              = pAsset->GetSize();
+            if (!pBuffer || sizeBytes == 0)
+                return false;
+
+            pBufferOut->resize(sizeBytes);
+            memcpy(pBufferOut->data(), pBuffer.get(), sizeBytes);
+
+            // Report where the asset was found, so Aurora can anchor references inside it (notably
+            // a MaterialX document's relative texture paths) to the folder it came from.
+            *pFileNameOut = resolved.GetPathString();
+
+            return true;
+        });
 
     // create a new scene for this renderer.
     _auroraScene = _auroraRenderer->createScene();
@@ -148,6 +179,7 @@ HdAuroraRenderDelegate::HdAuroraRenderDelegate(HdRenderSettingsMap const& settin
     };
     _settingFunctions[HdAuroraTokens::kIsDenoisingEnabled] = [this](VtValue const& value) {
         _auroraRenderer->options().setBoolean("isDenoisingEnabled", value.Get<bool>());
+        _denoisingFrameCount = 0;
         return true;
     };
     _settingFunctions[HdAuroraTokens::kIsAlphaEnabled] = [this](VtValue const& value) {
@@ -162,7 +194,7 @@ HdAuroraRenderDelegate::HdAuroraRenderDelegate(HdRenderSettingsMap const& settin
             return false;
         };
     _settingFunctions[HdAuroraTokens::kBackgroundImage] = [this](VtValue const& value) {
-        _backgroundImageFilePath = value.Get<SdfAssetPath>().GetAssetPath();
+        _backgroundImageFilePath = GetUsableAssetPath(value);
         _bEnvironmentIsDirty     = true;
         return false;
     };
@@ -309,11 +341,47 @@ void HdAuroraRenderDelegate::SetRenderSetting(TfToken const& key, VtValue const&
     _sampleRestartNeeded |= restartNeeded;
 }
 
+bool HdAuroraRenderDelegate::IsDenoisingEnabled() const
+{
+    VtValue value = GetRenderSetting(HdAuroraTokens::kIsDenoisingEnabled);
+    return value.IsHolding<bool>() && value.UncheckedGet<bool>();
+}
+
+uint32_t HdAuroraRenderDelegate::MaxDenoisingFrameCount() const
+{
+    VtValue value = GetRenderSetting(HdAuroraTokens::kMaxDenoisingFrameCount);
+    if (value.IsHolding<int>() && value.UncheckedGet<int>() > 0)
+    {
+        return static_cast<uint32_t>(value.UncheckedGet<int>());
+    }
+
+    constexpr uint32_t kDefaultMaxDenoisingFrameCount = 50;
+    return kDefaultMaxDenoisingFrameCount;
+}
+
+uint32_t HdAuroraRenderDelegate::UpdateDenoisingFrame(bool restart)
+{
+    if (restart)
+    {
+        _denoisingFrameCount = 0;
+    }
+
+    // Nothing left to render once the accumulation is complete, matching the zero
+    // SampleCounter::update() returns when the sample budget is spent.
+    if (IsDenoisingComplete())
+    {
+        return 0;
+    }
+    _denoisingFrameCount++;
+    return 1;
+}
+
 VtValue HdAuroraRenderDelegate::GetRenderSetting(TfToken const& key) const
 {
     if (HdAuroraTokens::kCurrentSamples == key)
     {
-        return VtValue(static_cast<int>(_sampleCounter.currentSamples()));
+        return VtValue(static_cast<int>(
+            IsDenoisingEnabled() ? _denoisingFrameCount : _sampleCounter.currentSamples()));
     }
     else if (HdAuroraTokens::kIsAlphaEnabled == key)
     {

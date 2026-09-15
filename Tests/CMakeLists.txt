@@ -52,6 +52,10 @@ if(APPLE)
     # So the default POST_BUILD command added by gtest_discover_tests cannot run.
     # Refer to https://cmake.org/cmake/help/latest/module/GoogleTest.html for more information.
     set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
+elseif(UNIX)
+    # Same issue on Linux: shared libraries aren't deployed next to test binaries,
+    # so test discovery at build time fails with missing library errors.
+    set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
 endif()
 # Add variable to locate the test helpers.
 set(TEST_HELPERS_FOLDER ${CMAKE_CURRENT_LIST_DIR}/Helpers)

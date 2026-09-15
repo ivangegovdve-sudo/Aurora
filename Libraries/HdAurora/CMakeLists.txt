@@ -11,6 +11,9 @@ find_package(MaterialX REQUIRED) # MaterialX SDK
 find_package(pxr REQUIRED) # Find the Universal Scene Description (USD) library
 # Alias the namespace to meet the cmake convention on imported targets
 add_library(MaterialX::GenGlsl ALIAS MaterialXGenGlsl)
+if(ENABLE_EXPERIMENTAL_MDL)
+    add_library(MaterialX::GenMdl ALIAS MaterialXGenMdl)
+endif()
 # Include system python libraries if needed by USD.
 if(USD_BUILT_WITH_PYTHON)
   find_package (Python3 COMPONENTS Development)
@@ -47,6 +50,7 @@ add_library(${PROJECT_NAME} SHARED
     "HdAuroraRenderDelegate.h"
     "HdAuroraRenderPass.cpp"
     "HdAuroraRenderPass.h"
+    "HdAuroraAssetPath.h"
     "HdAuroraTokens.h"
     "pch.h"
     ${VERSION_FILES}
@@ -80,6 +84,10 @@ PRIVATE
     Aurora
 )
 
+if(ENABLE_EXPERIMENTAL_MDL)
+    target_link_libraries(${PROJECT_NAME} PRIVATE MaterialX::GenMdl)
+endif()
+
 # Add default compile definitions (set in root CMakefile)
 target_compile_definitions(${PROJECT_NAME} PRIVATE ${DEFAULT_COMPILE_DEFINITIONS})
 
@@ -100,7 +108,13 @@ configure_file(
 if(WIN32)
     # Create a custom target that will copy USD executables to the runtime folder.
     file(GLOB USD_EXECUTABLES ${pxr_ROOT}/bin/*)
-    set(USD_PYTHON_LIB_DIR "${pxr_ROOT}/lib/python")
+    # USD v26.08 installs its Python modules to lib/site-packages;
+    # v25.08 and earlier used lib/python.
+    if(EXISTS "${pxr_ROOT}/lib/site-packages")
+        set(USD_PYTHON_LIB_DIR "${pxr_ROOT}/lib/site-packages")
+    else()
+        set(USD_PYTHON_LIB_DIR "${pxr_ROOT}/lib/python")
+    endif()
     set(USD_LIB_PLUGIN_DIR "${pxr_ROOT}/lib/usd")
     set(USD_PLUGIN_DIR "${pxr_ROOT}/plugin/usd")
     add_custom_target(CopyUSDExecutables ALL
@@ -129,6 +143,22 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy ${HDAURORA_PLUGIN_RESOURCES_DIR}/plugInfo.json ${RUNTIME_OUTPUT_DIR}/usd/hdAurora/resources/plugInfo.json
     )
 
+elseif(APPLE)
+    # Deploy the hdAurora render delegate plugin for USD discovery.
+    set(HDAURORA_PLUGIN_RESOURCES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources)
+    # Top-level plugInfo.json with "Includes" directive required for USD scanning.
+    configure_file(
+        "${HDAURORA_PLUGIN_RESOURCES_DIR}/pluginPath.plugInfo.json.in"
+        "${HDAURORA_PLUGIN_RESOURCES_DIR}/pluginPath.plugInfo.json"
+        @ONLY
+    )
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        # Ensure the plugin directory structure exists.
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${RUNTIME_OUTPUT_DIR}/usd/hdAurora/resources
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:${PROJECT_NAME}> ${RUNTIME_OUTPUT_DIR}/usd
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${HDAURORA_PLUGIN_RESOURCES_DIR}/plugInfo.json ${RUNTIME_OUTPUT_DIR}/usd/hdAurora/resources/plugInfo.json
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${HDAURORA_PLUGIN_RESOURCES_DIR}/pluginPath.plugInfo.json ${RUNTIME_OUTPUT_DIR}/usd/plugInfo.json
+    )
 else() # Linux
     #TODO anything we need to set to support the Aurora execution?
 endif()

@@ -85,13 +85,17 @@ struct InstanceShaderRecord
     int specularRoughnessTextureIndex = -1;
     int normalTextureIndex            = -1;
     int opacityTextureIndex           = -1;
-#ifdef __APPLE__
     int emissionTextureIndex          = -1;
-#endif
+
     // Geometry flags.
     unsigned int hasNormals   = true;
     unsigned int hasTangents  = false;
     unsigned int hasTexCoords = true;
+#if !defined(__APPLE__)
+    // Fix shader record layout mismatch (Vulkan only).
+    unsigned int isOpaque     = true;
+    int instanceBufferOffset  = 0;
+#endif
 };
 
 // Per-instance data.
@@ -147,8 +151,15 @@ private:
     map<string, int> _imageNameLookup;
     HgiResourceBindingsHandleWrapper::Pointer _resBindings;
     HgiTextureHandleWrapper::Pointer _pDefaultImage;
+#if !defined(__APPLE__)
+    // Default alias map for Vulkan when no environment light image is present.
+    HgiBufferHandleWrapper::Pointer _pDefaultAliasMap;
+#endif
     HgiShaderFunctionHandleWrapper::Pointer _rayGenShaderFunc;
     HgiShaderFunctionHandleWrapper::Pointer _shadowMissShaderFunc;
+#if !defined(__APPLE__)
+    HgiShaderFunctionHandleWrapper::Pointer _instanceMissShaderFunc;
+#endif
     HgiShaderFunctionHandleWrapper::Pointer _closestHitShaderFunc;
     HgiShaderFunctionHandleWrapper::Pointer _anyHitShaderFunc;
 };

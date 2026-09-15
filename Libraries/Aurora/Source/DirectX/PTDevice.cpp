@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -102,6 +102,9 @@ bool PTDevice::initialize(PTDevice::Features features, int sampleCount)
     {
         // Enable the debug layer.
         pDebugInterface->EnableDebugLayer();
+
+        // To enable GPU-based validation for debugging (disabled as it adds high overhead):
+        // QueryInterface for ID3D12Debug3, then call pDebug3->SetEnableGPUBasedValidation(true);
 
         // Break on DXGI errors.
         ComPtr<IDXGIInfoQueue> pDXGIInfoQueue;

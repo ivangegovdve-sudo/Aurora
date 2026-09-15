@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,6 +39,10 @@ struct ImageAsset
 using ProcessImageFunction = function<bool(
     const vector<unsigned char>& buffer, const string& filename, ImageAsset* pImageOut)>;
 
+/// Default resource loading function, used when no callback is set.
+bool defaultLoadResourceFunction(
+    const string& uri, vector<unsigned char>* pBufferOut, string* pFileNameOut);
+
 /// Asset manager class, used to load and cache external asset files.
 class AssetManager
 {
@@ -52,7 +56,11 @@ public:
 
     /// Load a new text file from a Universal Resource Identifier(URI) string, or return existing
     /// one if already loaded.
-    shared_ptr<string> acquireTextFile(const string& uri);
+    ///
+    /// \param uri The URI of the text file to load.
+    /// \param pResolvedUriOut If not null, receives the URI from which the file was loaded. This
+    /// lets the caller resolve references inside the file relative to its location.
+    shared_ptr<string> acquireTextFile(const string& uri, string* pResolvedUriOut = nullptr);
 
     /// Load a new image from a Universal Resource Identifier(URI) string, or return existing
     /// one if already loaded.
@@ -66,7 +74,10 @@ public:
     /// Set the callback function used to load all resources from a provided URI.
     ///
     /// \param The callback function to used for all resource loading.
-    void setLoadResourceFunction(LoadResourceFunction func) { _loadResourceFunction = func; }
+    void setLoadResourceFunction(LoadResourceFunction func)
+    {
+        _loadResourceFunction = func ? func : defaultLoadResourceFunction;
+    }
 
 protected:
     // Flipped vertically defaults to true, this matches traditional Aurora.

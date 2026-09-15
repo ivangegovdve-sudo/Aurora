@@ -1,6 +1,6 @@
 #
 # Copyright 2017 Pixar
-# Copyright 2025 Autodesk
+# Copyright 2026 Autodesk
 #
 # Licensed under the Apache License, Version 2.0 (the "Apache License")
 # with the following modification; you may not use this file except in
@@ -88,12 +88,15 @@ class Dependency(object):
 ############################################################
 # zlib
 
-ZLIB_URL = "https://github.com/madler/zlib/archive/v1.3.1.zip"
+ZLIB_URL = "https://github.com/madler/zlib/archive/v1.3.2.zip"
 ZLIB_INSTALL_FOLDER = "zlib"
 ZLIB_PACKAGE_NAME = "ZLIB"
 
 def InstallZlib(context, force, buildArgs):
     with CurrentWorkingDirectory(DownloadURL(ZLIB_URL, context, force)):
+        # zlib 1.3.2 renamed the Windows static library from "zlibstatic" to "zs".
+        # Restore the historical name, matching the company alignment recipe.
+        ApplyGitPatch(context, "zlib.v1.3.2.patch")
         RunCMake(context, True, ZLIB_INSTALL_FOLDER, buildArgs)
 
 ZLIB = Dependency(ZLIB_INSTALL_FOLDER, ZLIB_PACKAGE_NAME, InstallZlib, ZLIB_URL, "include/zlib.h")
@@ -101,8 +104,8 @@ ZLIB = Dependency(ZLIB_INSTALL_FOLDER, ZLIB_PACKAGE_NAME, InstallZlib, ZLIB_URL,
 ############################################################
 # boost
 
-BOOST_URL = "https://archives.boost.io/release/1.88.0/source/boost_1_88_0.tar.gz"
-# Use a sub-version in the version string to force reinstallation, even if 1.88.0 installed.
+BOOST_URL = "https://archives.boost.io/release/1.91.0/source/boost_1_91_0.tar.gz"
+# Use a sub-version in the version string to force reinstallation, even if 1.91.0 installed.
 BOOST_VERSION_STRING = BOOST_URL+".a"
 
 if Windows():
@@ -110,7 +113,7 @@ if Windows():
     # subdirectory, which we have to account for here. In theory, specifying
     # "layout=system" would make the Windows install match Linux, but that
     # causes problems for other dependencies that look for boost.
-    BOOST_VERSION_FILE = "include/boost-1_88/boost/version.hpp"
+    BOOST_VERSION_FILE = "include/boost-1_91/boost/version.hpp"
 else:
     BOOST_VERSION_FILE = "include/boost/version.hpp"
 
@@ -147,7 +150,8 @@ def InstallBoost_Helper(context, force, buildArgs):
             elif context.cmakeToolset == "v142" or IsVisualStudio2019OrGreater():
                 bsToolset = "vc142"
 
-        bootstrap = "bootstrap.bat" if Windows() else "./bootstrap.sh"
+        # Use relative paths for bootstrap and b2 executables.
+        bootstrap = r".\bootstrap.bat" if Windows() else "./bootstrap.sh"
         if not Windows():
             # zip doesn't preserve file attributes, so force +x manually.
             Run('chmod +x ' + bootstrap)
@@ -190,6 +194,7 @@ def InstallBoost_Helper(context, force, buildArgs):
             f'--prefix="{instFolder}"',
             f'--build-dir="{context.buildDir}"',
             f'-j{numProc}',
+            '-d0',
             'address-model=64',
             'link=shared',
             'runtime-link=shared',
@@ -223,7 +228,8 @@ def InstallBoost_Helper(context, force, buildArgs):
         # Required by OpenImageIO
         b2Settings.append("--with-date_time")
         b2Settings.append("--with-chrono")
-        b2Settings.append("--with-system")
+        # Note: boost 'system' became header-only in 1.91.0, so
+        # --with-system is no longer a valid b2 option and is omitted.
         b2Settings.append("--with-thread")
         b2Settings.append("--with-filesystem")
 
@@ -261,7 +267,7 @@ def InstallBoost_Helper(context, force, buildArgs):
         # Add on any user-specified extra arguments.
         b2Settings += buildArgs
 
-        b2 = "b2" if Windows() else "./b2"
+        b2 = r".\b2" if Windows() else "./b2"
 
         # boost only accepts three variants: debug, release, profile
         b2ExtraSettings = []
@@ -298,7 +304,7 @@ BOOST = Dependency(BOOST_INSTALL_FOLDER, BOOST_PACKAGE_NAME, InstallBoost, BOOST
 ############################################################
 # Intel oneTBB
 
-ONETBB_URL = "https://github.com/uxlfoundation/oneTBB/archive/refs/tags/v2022.0.0.zip"
+ONETBB_URL = "https://github.com/uxlfoundation/oneTBB/archive/refs/tags/v2023.0.0.zip"
 ONETBB_INSTALL_FOLDER = "tbb"
 ONETBB_PACKAGE_NAME = "TBB"
 
@@ -307,6 +313,8 @@ def InstallOneTBB(context, force, buildArgs):
         extraArgs = [
             '-DTBB_TEST=OFF',
             '-DTBB_STRICT=OFF',
+            # Disables hwloc automatic search; matches company alignment recipe.
+            '-DTBB_DISABLE_HWLOC_AUTOMATIC_SEARCH=ON',
             '-DBUILD_SHARED_LIBS=ON'
         ]
         extraArgs += buildArgs
@@ -396,7 +404,7 @@ TBB = Dependency(TBB_INSTALL_FOLDER, TBB_PACKAGE_NAME, InstallTBB, TBB_URL, "inc
 ############################################################
 # JPEG
 
-JPEG_URL = "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/3.1.1.zip"
+JPEG_URL = "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/3.2.0.zip"
 JPEG_INSTALL_FOLDER = "libjpeg"
 JPEG_PACKAGE_NAME = "JPEG"
 
@@ -409,7 +417,7 @@ JPEG = Dependency(JPEG_INSTALL_FOLDER, JPEG_PACKAGE_NAME, InstallJPEG, JPEG_URL,
 ############################################################
 # TIFF
 
-TIFF_URL = "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.0/libtiff-v4.7.0.zip"
+TIFF_URL = "https://gitlab.com/libtiff/libtiff/-/archive/v4.7.2/libtiff-v4.7.2.zip"
 TIFF_INSTALL_FOLDER = "libtiff"
 TIFF_PACKAGE_NAME = "TIFF"
 
@@ -432,7 +440,7 @@ def InstallTIFF(context, force, buildArgs):
         # ELF systems or systems which provide an emulation; therefore
         # skipping it completely on mac and windows.
         if MacOS() or Windows():
-            extraArgs = ["-Dld-version-script=OFF"]
+            extraArgs = ["-Dld-version-script=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5"]
         else:
             extraArgs = []
         extraArgs += buildArgs
@@ -443,7 +451,7 @@ TIFF = Dependency(TIFF_INSTALL_FOLDER, TIFF_PACKAGE_NAME, InstallTIFF, TIFF_URL,
 ############################################################
 # PNG
 
-PNG_URL = "https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.49.zip"
+PNG_URL = "https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.58.zip"
 PNG_INSTALL_FOLDER = "libpng"
 PNG_PACKAGE_NAME = "PNG"
 
@@ -467,7 +475,7 @@ PNG = Dependency(PNG_INSTALL_FOLDER, PNG_PACKAGE_NAME, InstallPNG, PNG_URL, "inc
 ############################################################
 # GLM
 
-GLM_URL = "https://github.com/g-truc/glm/archive/refs/tags/1.0.1.zip"
+GLM_URL = "https://github.com/g-truc/glm/archive/refs/tags/1.0.3.zip"
 GLM_INSTALL_FOLDER = "glm"
 GLM_PACKAGE_NAME = "glm"
 
@@ -481,7 +489,7 @@ GLM = Dependency(GLM_INSTALL_FOLDER, GLM_PACKAGE_NAME, InstallGLM, GLM_URL, "glm
 # STB
 
 STB_URL = "https://github.com/nothings/stb.git"
-STB_SHA = "f58f558c120e9b32c217290b80bad1a0729fbb2c" # master on 2025-05-26
+STB_SHA = "2c980bb59875b0d32144a71867fbdebb2f77cd20" # master on 2026-08-02
 STB_INSTALL_FOLDER = "stb"
 STB_PACKAGE_NAME = "stb"
 
@@ -495,7 +503,7 @@ STB = Dependency(STB_INSTALL_FOLDER, STB_PACKAGE_NAME, InstallSTB, STB_SHA, "inc
 ############################################################
 # TinyGLTF
 
-TinyGLTF_URL = "https://github.com/syoyo/tinygltf/archive/refs/tags/v2.9.6.zip"
+TinyGLTF_URL = "https://github.com/syoyo/tinygltf/archive/refs/tags/v2.9.7.zip"
 TinyGLTF_INSTALL_FOLDER = "tinygltf"
 TinyGLTF_PACKAGE_NAME = "TinyGLTF"
 
@@ -521,7 +529,7 @@ TINYOBJLOADER = Dependency(TinyObjLoader_INSTALL_FOLDER, TinyObjLoader_PACKAGE_N
 ############################################################
 # TinyEXR
 
-TinyEXR_URL = "https://github.com/syoyo/tinyexr/archive/refs/tags/v1.0.12.zip"
+TinyEXR_URL = "https://github.com/syoyo/tinyexr/archive/refs/tags/v1.0.13.zip"
 TinyEXR_INSTALL_FOLDER = "tinyexr"
 TinyEXR_PACKAGE_NAME = "tinyexr"
 TinyEXR_INSTALL_FOLDER = "tinyexr"
@@ -529,24 +537,23 @@ TinyEXR_INSTALL_FOLDER = "tinyexr"
 def InstallTinyEXR(context, force, buildArgs):
     with CurrentWorkingDirectory(DownloadURL(TinyEXR_URL, context, force)):
         CopyFiles(context, "tinyexr.h", "include", TinyEXR_INSTALL_FOLDER)
+        # tinyexr 1.0.13 splits implementation across multiple .hh files
+        import glob
+        for hh in glob.glob("*.hh"):
+            CopyFiles(context, hh, "include", TinyEXR_INSTALL_FOLDER)
 
 TINYEXR = Dependency(TinyEXR_INSTALL_FOLDER, TinyEXR_PACKAGE_NAME, InstallTinyEXR, TinyEXR_URL, "include/tinyexr.h")
 
 ############################################################
 # miniz
 
-miniz_URL = "https://github.com/richgel999/miniz/archive/refs/tags/3.0.2.zip"
+miniz_URL = "https://github.com/richgel999/miniz/archive/refs/tags/3.1.2.zip"
 
 miniz_INSTALL_FOLDER = "miniz"
 miniz_PACKAGE_NAME = "miniz"
 
 def InstallMiniZ(context, force, buildArgs):
     with CurrentWorkingDirectory(DownloadURL(miniz_URL, context, force)):
-        # Compatible to CMake 4.0 and later.
-        # This fix is already available in the master branch of miniz but not released yet.
-        # Can be removed once miniz releases a new version.
-        ApplyGitPatch(context, "miniz.patch")
-
         extraArgs = ['-DCMAKE_POSITION_INDEPENDENT_CODE=ON']
 
         # Add on any user-specified extra arguments.
@@ -558,7 +565,7 @@ MINIZ = Dependency(miniz_INSTALL_FOLDER, miniz_PACKAGE_NAME, InstallMiniZ, miniz
 ############################################################
 # uriparser
 
-URIPARSER_URL = "https://github.com/uriparser/uriparser/archive/refs/tags/uriparser-0.9.8.zip"
+URIPARSER_URL = "https://github.com/uriparser/uriparser/archive/refs/tags/uriparser-1.0.2.zip"
 
 URIPARSER_INSTALL_FOLDER = "uriparser"
 URIPARSER_PACKAGE_NAME = "uriparser"
@@ -581,7 +588,7 @@ URIPARSER = Dependency(URIPARSER_INSTALL_FOLDER, URIPARSER_PACKAGE_NAME, Install
 ############################################################
 # IlmBase/OpenEXR
 
-OPENEXR_URL = "https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v3.3.4.zip"
+OPENEXR_URL = "https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v3.4.14.zip"
 
 OPENEXR_INSTALL_FOLDER = "OpenEXR"
 OPENEXR_PACKAGE_NAME = "OpenEXR"
@@ -607,14 +614,14 @@ OPENEXR = Dependency(OPENEXR_INSTALL_FOLDER, OPENEXR_PACKAGE_NAME, InstallOpenEX
 ############################################################
 # OpenImageIO
 
-OIIO_URL = "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/refs/tags/v3.0.7.0.zip"
+OIIO_URL = "https://github.com/AcademySoftwareFoundation/OpenImageIO/archive/refs/tags/v3.1.13.0.zip"
 
 OIIO_INSTALL_FOLDER = "OpenImageIO"
 OIIO_PACKAGE_NAME = "OpenImageIO"
 
 def InstallOpenImageIO(context, force, buildArgs):
     with CurrentWorkingDirectory(DownloadURL(OIIO_URL, context, force)):
-        ApplyGitPatch(context, "OpenImageIO.v3.0.7.0.patch")
+        ApplyGitPatch(context, "OpenImageIO.v3.1.13.0.patch")
 
         extraArgs = ['-DOIIO_BUILD_TOOLS=OFF',
                      '-DOIIO_BUILD_TESTS=OFF',
@@ -664,7 +671,7 @@ OPENIMAGEIO = Dependency(OIIO_INSTALL_FOLDER, OIIO_PACKAGE_NAME, InstallOpenImag
 ############################################################
 # OpenSubdiv
 
-OPENSUBDIV_URL = "https://github.com/PixarAnimationStudios/OpenSubdiv/archive/v3_6_0.zip"
+OPENSUBDIV_URL = "https://github.com/PixarAnimationStudios/OpenSubdiv/archive/v3_6_1.zip"
 OPENSUBDIV_INSTALL_FOLDER = "OpenSubdiv"
 OPENSUBDIV_PACKAGE_NAME = "OpenSubdiv"
 
@@ -721,36 +728,40 @@ OPENSUBDIV = Dependency(OPENSUBDIV_INSTALL_FOLDER, OPENSUBDIV_PACKAGE_NAME, Inst
 ############################################################
 # MaterialX
 
-MATERIALX_URL = "https://github.com/AcademySoftwareFoundation/MaterialX/archive/v1.39.3.zip"
+MATERIALX_REPO = "https://github.com/autodesk-forks/MaterialX"
+MATERIALX_TAG = "v1.39.5.20260603.dev_adsk"
+MATERIALX_FOLDER = "MaterialX-" + MATERIALX_TAG
 MATERIALX_INSTALL_FOLDER = "MaterialX"
 MATERIALX_PACKAGE_NAME = "MaterialX"
 
 def InstallMaterialX(context, force, buildArgs):
-    with CurrentWorkingDirectory(DownloadURL(MATERIALX_URL, context, force)):
-        cmakeOptions = ['-DMATERIALX_BUILD_SHARED_LIBS=ON', '-DMATERIALX_BUILD_TESTS=OFF']
+    with CurrentWorkingDirectory(GitClone(MATERIALX_REPO, MATERIALX_TAG, MATERIALX_FOLDER, context)):
+        cmakeOptions = ['-DMATERIALX_BUILD_SHARED_LIBS=ON', '-DMATERIALX_BUILD_TESTS=OFF',
+                        '-DMATERIALX_BUILD_GEN_SLANG=ON', '-DMATERIALX_BUILD_RENDER=ON',
+                        '-DMATERIALX_BUILD_VIEWER=ON', '-DMATERIALX_BUILD_GRAPH_EDITOR=ON']
         cmakeOptions += buildArgs
 
         RunCMake(context, True, MATERIALX_INSTALL_FOLDER, cmakeOptions)
 
-MATERIALX = Dependency(MATERIALX_INSTALL_FOLDER, MATERIALX_PACKAGE_NAME, InstallMaterialX, MATERIALX_URL, "include/MaterialXCore/Library.h")
+MATERIALX = Dependency(MATERIALX_INSTALL_FOLDER, MATERIALX_PACKAGE_NAME, InstallMaterialX, MATERIALX_REPO + "-" + MATERIALX_TAG, "include/MaterialXCore/Library.h")
 
 ############################################################
 # USD
 
-USD_URL = "https://github.com/autodesk-forks/USD/archive/refs/tags/v25.08-Aurora-v25.08.zip"
-USD_INSTALL_FOLDER = "USD"
+USD_URL = "https://github.com/autodesk-forks/USD.git"
+USD_TAG = "adsk/feature/hgiraytracing-metal"
+USD_FOLDER = "USD-" + USD_TAG.replace('/', '-')
+USD_INSTALL_FOLDER = "USD-" + USD_TAG.replace('/', '-')
 USD_PACKAGE_NAME = "pxr"
 
 def InstallUSD(context, force, buildArgs):
-    with CurrentWorkingDirectory(DownloadURL(USD_URL, context, force)):
-
-        # We need to apply patch to make USD build with our externals configuration
-        ApplyGitPatch(context, "USD.v25.08.patch")
+    with CurrentWorkingDirectory(GitClone(USD_URL, USD_TAG, USD_FOLDER, context)):
 
         extraArgs = []
 
         if Linux():
-            extraArgs.append('-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++')
+            extraArgs.append('-DCMAKE_C_COMPILER=gcc')
+            extraArgs.append('-DCMAKE_CXX_COMPILER=g++')
 
         extraArgs.append('-DPXR_PREFER_SAFETY_OVER_SPEED=ON')
         extraArgs.append('-DBUILD_SHARED_LIBS=ON')
@@ -776,20 +787,46 @@ def InstallUSD(context, force, buildArgs):
 
         extraArgs.append('-DPXR_BUILD_USD_IMAGING=ON')
         extraArgs.append('-DPXR_BUILD_OPENIMAGEIO_PLUGIN=ON')
-        extraArgs.append('-DPXR_BUILD_USDVIEW=ON')
+        pythonInfo = GetPythonInfo(context)
+        # Probe for PySide to avoid USD build failure when Qt bindings are missing
+        hasPySide = False
+        if pythonInfo:
+            for module in ("PySide6", "PySide2"):
+                if subprocess.call([pythonInfo[0], "-c", "import " + module],
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL) == 0:
+                    hasPySide = True
+                    break
+        if hasPySide:
+            extraArgs.append('-DPXR_BUILD_USDVIEW=ON')
+        else:
+            PrintWarning("PySide6/PySide2 not found; building USD without usdview.")
+            extraArgs.append('-DPXR_BUILD_USDVIEW=OFF')
         extraArgs.append('-DPXR_ENABLE_PYTHON_SUPPORT=ON')
         extraArgs.append('-DPXR_USE_PYTHON_3=ON')
-        pythonInfo = GetPythonInfo(context)
         if pythonInfo:
-            # According to FindPythonLibs.cmake these are the variables
-            # to set to specify which Python installation to use.
+            # Legacy FindPythonLibs/FindPythonInterp variables (CMake < 3.12).
             extraArgs.append('-DPYTHON_EXECUTABLE="{pyExecPath}"'
                             .format(pyExecPath=pythonInfo[0]))
             extraArgs.append('-DPYTHON_LIBRARY="{pyLibPath}"'
                             .format(pyLibPath=pythonInfo[1]))
             extraArgs.append('-DPYTHON_INCLUDE_DIR="{pyIncPath}"'
                             .format(pyIncPath=pythonInfo[2]))
+            # Modern find_package(Python3) hint (CMake >= 3.12).  Without this,
+            # CMake may pick up a different interpreter (e.g. the Xcode-bundled
+            # Python on macOS) and fail to find jinja2 / PySide6.
+            extraArgs.append('-DPython3_EXECUTABLE="{pyExecPath}"'
+                            .format(pyExecPath=pythonInfo[0]))
             extraArgs.append('-DPXR_USE_DEBUG_PYTHON=OFF')
+
+            # usdview needs pyside6-uic, which USD locates with find_program().
+            pySideBinDir = os.path.dirname(pythonInfo[0])
+            if Windows():
+                scriptsDir = os.path.join(os.path.dirname(pySideBinDir), 'Scripts')
+                if os.path.isdir(scriptsDir):
+                    pySideBinDir = scriptsDir
+            extraArgs.append('-DPYSIDE_BIN_DIR="{binDir}"'
+                            .format(binDir=pySideBinDir.replace(os.sep, '/')))
             
 
         extraArgs.append('-DPXR_BUILD_ALEMBIC_PLUGIN=OFF')
@@ -801,8 +838,9 @@ def InstallUSD(context, force, buildArgs):
         extraArgs.append('-DPXR_ENABLE_TEXT_SUPPORT=OFF')
 
         if Windows():
-            # Increase the precompiled header buffer limit.
-            extraArgs.append('-DCMAKE_CXX_FLAGS="/Zm150"')
+            # /Zm150 increases the precompiled header buffer limit.
+            # /utf-8 is required by the fmt library vendored into OpenImageIO 3.1.
+            extraArgs.append('-DCMAKE_CXX_FLAGS="/Zm150 /utf-8"')
 
         # Make sure to use boost installed by the build script and not any
         # system installed boost
@@ -828,13 +866,13 @@ USD = Dependency(USD_INSTALL_FOLDER, USD_PACKAGE_NAME, InstallUSD, USD_URL, "inc
 ############################################################
 # DXC
 
-DXC_URL = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip"
+DXC_URL = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2607/dxc_2026_07_29.zip"
 DXC_INSTALL_FOLDER = "DXC"
 DXC_PACKAGE_NAME = "DXC"
 
 def InstallDXC(context, force, buildArgs):
     if Windows():
-        with CurrentWorkingDirectory(DownloadURL(DXC_URL, context, force, destDir="DXC_2025_07_14")):
+        with CurrentWorkingDirectory(DownloadURL(DXC_URL, context, force, destDir="DXC_2026_07_29")):
             # Copy dxc.exe, dxcompiler.dll, and dxil.dll from the bin/x64 directory.
             CopyDirectory(context, "bin/x64", "bin", DXC_INSTALL_FOLDER)
     else:
@@ -846,91 +884,188 @@ DXC = Dependency(DXC_INSTALL_FOLDER, DXC_PACKAGE_NAME, InstallDXC, DXC_URL, "bin
 # Slang
 
 if Windows():
-    Slang_URL = "https://github.com/shader-slang/slang/releases/download/v2025.12.1/slang-2025.12.1-windows-x86_64.zip"
+    Slang_URL = "https://github.com/shader-slang/slang/releases/download/v2026.14.1/slang-2026.14.1-windows-x86_64.zip"
 elif MacOS():
-    Slang_URL = "https://github.com/shader-slang/slang/releases/download/v2025.12.1/slang-2025.12.1-macos-aarch64.zip"
+    Slang_URL = "https://github.com/shader-slang/slang/releases/download/v2026.14.1/slang-2026.14.1-macos-aarch64.zip"
 else:
-    Slang_URL = "https://github.com/shader-slang/slang/releases/download/v2025.12.1/slang-2025.12.1-linux-x86_64.zip"
+    Slang_URL = "https://github.com/shader-slang/slang/releases/download/v2026.14.1/slang-2026.14.1-linux-x86_64.zip"
 Slang_INSTALL_FOLDER = "Slang"
 Slang_PACKAGE_NAME = "Slang"
 
 def InstallSlang(context, force, buildArgs):
-    Slang_SRC_FOLDER = DownloadURL(Slang_URL, context, force, destDir="Slang-2025.12.1")
+    Slang_SRC_FOLDER = DownloadURL(Slang_URL, context, force, destDir="Slang-2026.14.1")
     # Resolve Linux permission denied error.
     if Linux():
         with CurrentWorkingDirectory(Slang_SRC_FOLDER):
             Run('chmod +rwx ./bin/slangc')
     CopyDirectory(context, Slang_SRC_FOLDER, Slang_INSTALL_FOLDER)
+    # Slang v2026.14.1 symlinks arrive as text files containing target names, causing linker errors.
+    # Convert these text stubs back to proper symlinks by checking file content for sibling targets.
+    if MacOS() or Linux():
+        slang_lib_dir = os.path.join(context.externalsInstDir, Slang_INSTALL_FOLDER, "lib")
+        if os.path.isdir(slang_lib_dir):
+            for name in os.listdir(slang_lib_dir):
+                path = os.path.join(slang_lib_dir, name)
+                if not os.path.isfile(path) or os.path.islink(path):
+                    continue
+                if os.path.getsize(path) > 256:
+                    continue
+                try:
+                    with open(path, "r") as f:
+                        target = f.read().strip()
+                except (UnicodeDecodeError, OSError):
+                    continue
+                if not target or "/" in target or "\\" in target or "\n" in target:
+                    continue
+                if os.path.exists(os.path.join(slang_lib_dir, target)):
+                    PrintInfo("Restoring Slang symlink {0} -> {1}".format(name, target))
+                    os.remove(path)
+                    os.symlink(target, path)
 
-SLANG = Dependency(Slang_INSTALL_FOLDER, Slang_PACKAGE_NAME, InstallSlang, Slang_URL, "slang.h")
+SLANG = Dependency(Slang_INSTALL_FOLDER, Slang_PACKAGE_NAME, InstallSlang, Slang_URL, "include/slang.h")
 
 ############################################################
 # NRD
 
-NRD_URL = "https://github.com/NVIDIAGameWorks/RayTracingDenoiser.git"
-NRD_TAG = "v3.8.0"
+NRD_URL = "https://github.com/NVIDIA-RTX/NRD.git"
+NRD_TAG = "v4.17.3"
 NRD_INSTALL_FOLDER = "NRD"
 NRD_PACKAGE_NAME = "NRD"
 
 def InstallNRD(context, force, buildArgs):
     NRD_FOLDER = "NRD-"+NRD_TAG
     with CurrentWorkingDirectory(GitClone(NRD_URL, NRD_TAG, NRD_FOLDER, context)):
-        RunCMake(context, True, NRD_INSTALL_FOLDER, buildArgs, install=False)
-
-        CopyDirectory(context, "Include", "include", NRD_INSTALL_FOLDER)
-        CopyDirectory(context, "Integration", "Integration", NRD_INSTALL_FOLDER)
+        # Match NRD's normal and roughness encodings to Aurora's texture formats:
+        #   R10_G10_B10_A2_UNORM (2): ten bits per normal component for better quality than RGBA8.
+        #   SQRT_LINEAR (1): stores sqrt(roughness) for greater precision on narrow specular lobes.
+        #
+        # Encoding 2 packs roughness into the normal and uses .w for a material ID. Aurora instead
+        # uses its own unencoded normal/roughness guide for ray reconstruction and demodulation.
+        # The denoiser is DirectX-only, so disable unused SPIR-V and DXBC shader permutations.
+        nrdArgs = list(buildArgs or []) + [
+            "-D NRD_NORMAL_ENCODING=2",
+            "-D NRD_ROUGHNESS_ENCODING=1",
+            "-D NRD_EMBEDS_SPIRV_SHADERS=OFF",
+            "-D NRD_EMBEDS_DXBC_SHADERS=OFF",
+        ]
+        RunCMake(context, True, NRD_INSTALL_FOLDER, nrdArgs, install=False)
         if context.buildRelease or context.buildRelWithDebInfo :
             if Windows():
-                CopyFiles(context, "_Build/Release/*.dll", "bin", NRD_INSTALL_FOLDER)
-            CopyFiles(context, "_Build/Release/*", "lib", NRD_INSTALL_FOLDER)
+                CopyFiles(context, "_Bin/Release/*", "bin", NRD_INSTALL_FOLDER)
+            elif Linux():
+                CopyFiles(context, "_Bin/Release/*", "lib", NRD_INSTALL_FOLDER)
         if context.buildDebug:
             if Windows():
-                CopyFiles(context, "_Build/Debug/*.dll", "bin", NRD_INSTALL_FOLDER)
-            CopyFiles(context, "_Build/Debug/*", "lib", NRD_INSTALL_FOLDER)
+                CopyFiles(context, "_Bin/Debug/*", "bin", NRD_INSTALL_FOLDER)
+            elif Linux():
+                CopyFiles(context, "_Bin/Debug/*", "lib", NRD_INSTALL_FOLDER)
 
-        # NRD v3.x.x
         CopyDirectory(context, "Shaders", "Shaders", NRD_INSTALL_FOLDER)
-        CopyFiles(context, "Shaders/Include/NRD.hlsli", "Shaders/Include", NRD_INSTALL_FOLDER)
-        CopyFiles(context, "External/MathLib/*.hlsli", "Shaders/Source", NRD_INSTALL_FOLDER)
+        with CurrentWorkingDirectory(os.path.join(context.buildDir, NRD_FOLDER)):
+            if context.buildRelease or context.buildRelWithDebInfo :
+                CopyFiles(context, "Release/_deps/mathlib-src/*.hlsli", "Shaders/Source", NRD_INSTALL_FOLDER)
+            elif context.buildDebug:
+                CopyFiles(context, "Debug/_deps/mathlib-src/*.hlsli", "Shaders/Source", NRD_INSTALL_FOLDER)
+        
+        CopyDirectory(context, "Integration", "Integration", NRD_INSTALL_FOLDER)
+        CopyDirectory(context, "Include", "Include", NRD_INSTALL_FOLDER)
 
-NRD = Dependency(NRD_INSTALL_FOLDER, NRD_PACKAGE_NAME, InstallNRD, NRD_URL, "include/NRD.h")
+NRD = Dependency(NRD_INSTALL_FOLDER, NRD_PACKAGE_NAME, InstallNRD, NRD_URL, "Include/NRD.h")
 
 ############################################################
 # NRI
 
 NRI_URL = "https://github.com/NVIDIAGameWorks/NRI.git"
-NRI_TAG = "v1.87"
+NRI_TAG = "v179"
 NRI_INSTALL_FOLDER = "NRI"
 NRI_PACKAGE_NAME = "NRI"
 
 def InstallNRI(context, force, buildArgs):
     NRI_FOLDER = "NRI-"+NRI_TAG
     with CurrentWorkingDirectory(GitClone(NRI_URL, NRI_TAG, NRI_FOLDER, context)):
-        RunCMake(context, force, NRI_INSTALL_FOLDER, buildArgs, install=False)
+        # WORKAROUND: NRI v179 requires CMake 3.30, but our CI machines run 3.29.x.
+        # TODO: Drop this patch once CI is upgraded to CMake >= 3.30.
+        ApplyGitPatch(context, "NRI.v179.patch")
 
-        CopyDirectory(context, "Include", "include", NRI_INSTALL_FOLDER)
-        CopyDirectory(context, "Include/Extensions", "include/Extensions", NRI_INSTALL_FOLDER)
+        # Agility SDK support off: with it on, NRI requires ID3D12Device15, which no inbox Windows
+        # D3D12 runtime provides. That requires application exporting D3D12SDKVersion / D3D12SDKPath
+        # and ship the redistributable DLLs beside itself.
+        nriArgs = buildArgs + ["-D NRI_ENABLE_AGILITY_SDK_SUPPORT=OFF"]
+        RunCMake(context, force, NRI_INSTALL_FOLDER, nriArgs, install=False)
         if context.buildRelease or context.buildRelWithDebInfo :
             if Windows():
-                CopyFiles(context, "_Build/Release/*.dll", "bin", NRI_INSTALL_FOLDER)
-            CopyFiles(context, "_Build/Release/*", "lib", NRI_INSTALL_FOLDER)
+                CopyFiles(context, "_Bin/Release/*.dll", "bin", NRI_INSTALL_FOLDER)
+                CopyFiles(context, "_Bin/Release/*.lib", "bin", NRI_INSTALL_FOLDER)
+            elif Linux():
+                CopyFiles(context, "_Bin/Release/*", "lib", NRI_INSTALL_FOLDER)
         if context.buildDebug:
             if Windows():
-                CopyFiles(context, "_Build/Debug/*.dll", "bin", NRI_INSTALL_FOLDER)
-            CopyFiles(context, "_Build/Debug/*", "lib", NRI_INSTALL_FOLDER)
+                CopyFiles(context, "_Bin/Debug/*.dll", "bin", NRI_INSTALL_FOLDER)
+                CopyFiles(context, "_Bin/Debug/*.lib", "bin", NRI_INSTALL_FOLDER)
+            elif Linux():
+                CopyFiles(context, "_Bin/Debug/*", "lib", NRI_INSTALL_FOLDER)
 
-NRI = Dependency(NRI_INSTALL_FOLDER, NRI_PACKAGE_NAME, InstallNRI, NRI_URL, "include/NRI.h")
+        CopyDirectory(context, "Include/Extensions", "Include/Extensions", NRI_INSTALL_FOLDER)
+        CopyDirectory(context, "Include", "Include", NRI_INSTALL_FOLDER)
+
+NRI = Dependency(NRI_INSTALL_FOLDER, NRI_PACKAGE_NAME, InstallNRI, NRI_URL, "Include/NRI.h")
+
+############################################################
+# DLSS SDK (NVIDIA Deep Learning Super Sampling)
+
+DLSS_URL            = "https://github.com/NVIDIA/DLSS.git"
+DLSS_TAG            = "v310.6.0"
+DLSS_INSTALL_FOLDER = "DLSS"
+DLSS_PACKAGE_NAME   = "DLSS"
+
+def InstallDLSS(context, force, buildArgs):
+    DLSS_FOLDER = "DLSS-" + DLSS_TAG
+    with CurrentWorkingDirectory(GitClone(DLSS_URL, DLSS_TAG, DLSS_FOLDER, context)):
+        # Headers
+        CopyDirectory(context, "include", "include", DLSS_INSTALL_FOLDER)
+        if Windows():
+            # Static NGX loader libs (no DLL needed for the loader itself)
+            CopyFiles(context, "lib/Windows_x86_64/x64/*.lib", "lib", DLSS_INSTALL_FOLDER)
+            # Runtime DLLs -- release and dev variants
+            CopyFiles(context, "lib/Windows_x86_64/rel/*.dll", "bin/rel", DLSS_INSTALL_FOLDER)
+            CopyFiles(context, "lib/Windows_x86_64/dev/*.dll", "bin/dev", DLSS_INSTALL_FOLDER)
+
+DLSS = Dependency(DLSS_INSTALL_FOLDER, DLSS_PACKAGE_NAME, InstallDLSS, DLSS_URL, "include/nvsdk_ngx.h")
+
+############################################################
+# FidelityFX SDK (AMD FSR 4 / FSR 3.1)
+
+FSR_URL            = "https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git"
+FSR_TAG            = "v2.2.0"
+FSR_INSTALL_FOLDER = "FSR"
+FSR_PACKAGE_NAME   = "FSR"
+
+def InstallFSR(context, force, buildArgs):
+    FSR_FOLDER = "FSR-" + FSR_TAG
+    with CurrentWorkingDirectory(GitClone(FSR_URL, FSR_TAG, FSR_FOLDER, context)):
+        # Copy headers and signed binaries; no build is required.
+        CopyDirectory(context, "Kits/FidelityFX/upscalers/fsr3/include",
+                      "upscalers/fsr3/include", FSR_INSTALL_FOLDER)
+        CopyDirectory(context, "Kits/FidelityFX/upscalers/include",
+                      "upscalers/include", FSR_INSTALL_FOLDER)
+        CopyDirectory(context, "Kits/FidelityFX/api/include",
+                      "api/include", FSR_INSTALL_FOLDER)
+        CopyDirectory(context, "Kits/FidelityFX/signedbin",
+                      "signedbin", FSR_INSTALL_FOLDER)
+
+FSR = Dependency(FSR_INSTALL_FOLDER, FSR_PACKAGE_NAME, InstallFSR, FSR_URL,
+                 "upscalers/fsr3/include/ffx_fsr3upscaler.h")
 
 ############################################################
 # GLEW
 
 if Windows():
-    GLEW_URL = "https://github.com/nigels-com/glew/releases/download/glew-2.2.0/glew-2.2.0-win32.zip"
+    GLEW_URL = "https://github.com/nigels-com/glew/releases/download/glew-2.3.1/glew-2.3.1-win32.zip"
 elif MacOS():
-    GLEW_URL = "https://github.com/nigels-com/glew/releases/download/glew-2.2.0/glew-2.2.0.zip"
+    GLEW_URL = "https://github.com/nigels-com/glew/releases/download/glew-2.3.1/glew-2.3.1.zip"
 else:
     # TODO: Linux url ?
-    GLEW_URL = "https://github.com/nigels-com/glew/releases/download/glew-2.2.0/glew-2.2.0.zip"
+    GLEW_URL = "https://github.com/nigels-com/glew/releases/download/glew-2.3.1/glew-2.3.1.zip"
 
 
 GLEW_INSTALL_FOLDER = "glew"
@@ -953,7 +1088,7 @@ GLEW = Dependency(GLEW_INSTALL_FOLDER, GLEW_PACKAGE_NAME, InstallGLEW, GLEW_URL,
 ############################################################
 # GLFW
 
-GLFW_URL = "https://github.com/glfw/glfw/archive/refs/tags/3.3.8.zip"
+GLFW_URL = "https://github.com/glfw/glfw/archive/refs/tags/3.5.1.zip"
 GLFW_INSTALL_FOLDER = "GLFW"
 GLFW_PACKAGE_NAME = "glfw3"
 
@@ -969,7 +1104,7 @@ GLFW = Dependency(GLFW_INSTALL_FOLDER, GLFW_PACKAGE_NAME, InstallGLFW, GLFW_URL,
 ############################################################
 # CXXOPTS
 
-CXXOPTS_URL = "https://github.com/jarro2783/cxxopts/archive/refs/tags/v3.0.0.zip"
+CXXOPTS_URL = "https://github.com/jarro2783/cxxopts/archive/refs/tags/v3.3.1.zip"
 CXXOPTS_INSTALL_FOLDER = "cxxopts"
 CXXOPTS_PACKAGE_NAME = "cxxopts"
 
@@ -982,7 +1117,7 @@ CXXOPTS = Dependency(CXXOPTS_INSTALL_FOLDER, CXXOPTS_PACKAGE_NAME, InstallCXXOPT
 ############################################################
 # GTEST
 
-GTEST_URL = "https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip"
+GTEST_URL = "https://github.com/google/googletest/archive/refs/tags/v1.18.0.zip"
 GTEST_INSTALL_FOLDER = "gtest"
 GTEST_PACKAGE_NAME = "GTest"
 
@@ -992,6 +1127,28 @@ def InstallGTEST(context, force, buildArgs):
         RunCMake(context, True, GTEST_INSTALL_FOLDER, extraArgs)
 
 GTEST = Dependency(GTEST_INSTALL_FOLDER, GTEST_PACKAGE_NAME, InstallGTEST, GTEST_URL, "include/gtest/gtest.h")
+
+############################################################
+# NVIDIA MDL SDK
+
+if Windows():
+    MDL_URL = "https://github.com/NVIDIA/MDL-SDK/releases/download/2026.0.0/MDL-SDK-2026.0.0-391700.996-nt-x86-64.zip"
+elif MacOS():
+    MDL_URL = "https://github.com/NVIDIA/MDL-SDK/releases/download/2026.0.0/MDL-SDK-2026.0.0-391700.996-macosx-aarch64.tgz"
+else:
+    MDL_URL = "https://github.com/NVIDIA/MDL-SDK/releases/download/2026.0.0/MDL-SDK-2026.0.0-391700.996-linux-x86-64.tgz"
+MDL_INSTALL_FOLDER = "MDL"
+MDL_PACKAGE_NAME = "mdl"
+MDL_VERSION_STRING = "2026.0.0"
+
+def InstallMDL(context, force, buildArgs):
+    with CurrentWorkingDirectory(DownloadURL(MDL_URL, context, force)):
+        CopyDirectory(context, "include", "include", MDL_INSTALL_FOLDER)
+        CopyDirectory(context, "bin", "bin", MDL_INSTALL_FOLDER)
+        CopyDirectory(context, "lib", "lib", MDL_INSTALL_FOLDER)
+        CopyDirectory(context, "share", "share", MDL_INSTALL_FOLDER)
+
+MDL = Dependency(MDL_INSTALL_FOLDER, MDL_PACKAGE_NAME, InstallMDL, MDL_VERSION_STRING, "include/mi/mdl_sdk.h")
 
 ############################################################
 # Installation script
@@ -1028,9 +1185,11 @@ if Linux():
 - Required dependencies:
 The following libraries are required to build Aurora and its externals:
     zlib1g-dev, libjpeg-turbo8-dev, libtiff-dev, libpng-dev, libglm-dev, libglew-dev
-    libglfw3-dev, libgtest-dev, libgmock-dev
+    libglfw3-dev, libgtest-dev, libgmock-dev, libxt-dev
+    libshaderc-dev (find_package(Vulkan COMPONENTS shaderc_combined))
+    libxinerama-dev, libxi-dev, libxrandr-dev (MaterialX viewer / GLFW)
 You can install them with the following command on Ubuntu:
-    sudo apt-get -y install zlib1g-dev libjpeg-turbo8-dev libtiff-dev libpng-dev libglm-dev libglew-dev libglfw3-dev libgtest-dev libgmock-dev
+    sudo apt-get -y install zlib1g-dev libjpeg-turbo8-dev libtiff-dev libpng-dev libglm-dev libglew-dev libglfw3-dev libgtest-dev libgmock-dev libxt-dev libshaderc-dev libxinerama-dev libxcursor-dev libxi-dev libxrandr-dev
 """
 else:
     requiredDependenciesMsg = ""
@@ -1104,6 +1263,10 @@ group.add_argument("-j", "--jobs", type=int, default=GetCPUCount(),
                    help=("Number of build jobs to run in parallel. "
                          "(default: # of processors [{0}])"
                          .format(GetCPUCount())))
+group.add_argument("--enable-upscaler", action="store_true",
+                   help=("Enable DLSS4/FSR upscaling support"))
+group.add_argument("--enable-mdl", action="store_true",
+                   help=("Enable NVIDIA MDL SDK support"))
 
 args = parser.parse_args()
 
@@ -1182,6 +1345,10 @@ class InstallContext:
         else:
             self.buildTarget = ""
 
+        # Optional dependencies.
+        self.enableUpscaler = args.enable_upscaler
+        self.enableMDL = args.enable_mdl
+
         # Dependencies that are forced to be built
         self.forceBuildAll = args.force_all
         self.forceBuild = [dep.lower() for dep in args.force_build]
@@ -1223,10 +1390,6 @@ requiredDependencies = [ZLIB,
                         OPENSUBDIV,
                         USD,
                         SLANG,
-                        # Excluding NRD and NRI for Aurora 22.11 since denoiser
-                        # is disabled for this release
-                        # NRD,
-                        # NRI,
                         GLEW,
                         GLFW,
                         CXXOPTS,
@@ -1237,14 +1400,20 @@ requiredDependencies = [ZLIB,
 # of these librraies than the one we'd build and link our libraries against.
 #
 # On Ubuntu 24.04, you can run the following command to install these libraries:
-# sudo apt-get -y install zlib1g-dev libjpeg-turbo8-dev libtiff-dev libpng-dev libglm-dev libglew-dev libglfw3-dev libgtest-dev libgmock-dev libxt-dev
+# sudo apt-get -y install zlib1g-dev libjpeg-turbo8-dev libtiff-dev libpng-dev libglm-dev libglew-dev libglfw3-dev libgtest-dev libgmock-dev libxt-dev libxinerama-dev libxcursor-dev libxi-dev libxrandr-dev libshaderc-dev
 if Linux():
     excludes = [ZLIB, JPEG, TIFF, PNG, GLM, GLEW, GLFW, GTEST]
     for lib in excludes:
         requiredDependencies.remove(lib)
+    # TODO: requiredDependencies += [NRD, NRI]
 
 if Windows():
-    requiredDependencies = [DXC] + requiredDependencies
+    requiredDependencies += [DXC, NRD, NRI]
+    if context.enableUpscaler:
+        requiredDependencies += [DLSS, FSR]
+
+if context.enableMDL:
+    requiredDependencies += [MDL]
 
 context.cmakePrefixPaths = set(map(lambda lib: os.path.join(context.externalsInstDir, lib.installFolder), requiredDependencies))
 
@@ -1366,9 +1535,12 @@ try:
     # Download, build and install external libraries
     for dep in dependenciesToBuild:
         PrintStatus("Installing {dep}...".format(dep=dep.name))
-        dep.installer(context,
-                      buildArgs=context.GetBuildArguments(dep),
-                      force=context.ForceBuildDependency(dep))
+        if dep.Exists(context) and not context.ForceBuildDependency(dep):
+            PrintStatus("{dep} is already installed.".format(dep=dep.name))
+        else:
+            dep.installer(context,
+                          buildArgs=context.GetBuildArguments(dep),
+                          force=context.ForceBuildDependency(dep))
         dep.UpdateVersion(context)
 except Exception as e:
     PrintError(str(e))

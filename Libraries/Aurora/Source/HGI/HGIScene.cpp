@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -217,6 +217,11 @@ void HGIScene::rebuildInstanceList()
         // Update geometry flags.
         record.hasNormals   = record.geometry.normalBufferDeviceAddress != 0ull;
         record.hasTexCoords = record.geometry.texCoordBufferDeviceAddress != 0ull;
+#if !defined(__APPLE__)
+        // Set opacity flag and material offset (no layered materials supported yet in Vulkan).
+        record.isOpaque             = instance.material() ? instance.material()->isOpaque() : true;
+        record.instanceBufferOffset = 0;
+#endif
 
         // Get baseColor image from material.
         HGIImagePtr pBaseColorImage = nullptr;
@@ -225,7 +230,7 @@ void HGIScene::rebuildInstanceList()
             auto texture = pMtl->textures().getTexture("base_color_image");
             pBaseColorImage = dynamic_pointer_cast<HGIImage>(texture);
         }
-        if (pBaseColorImage)
+        if (pBaseColorImage && pBaseColorImage->texture().Get())
         {
             std::string debugName = pBaseColorImage->texture().Get()->GetDescriptor().debugName;
             int imageId = findTexture(debugName);
@@ -254,7 +259,7 @@ void HGIScene::rebuildInstanceList()
         {
             pSpecularRoughnessImage = dynamic_pointer_cast<HGIImage>(pMtl->textures().getTexture("specular_roughness_image"));
         }
-        if (pSpecularRoughnessImage)
+        if (pSpecularRoughnessImage && pSpecularRoughnessImage->texture().Get())
         {
             std::string debugName = pSpecularRoughnessImage->texture().Get()->GetDescriptor().debugName;
             int imageId = findTexture(debugName);
@@ -283,7 +288,7 @@ void HGIScene::rebuildInstanceList()
         {
             pOpacityImage = dynamic_pointer_cast<HGIImage>(pMtl->textures().getTexture("opacity_image"));
         }
-        if (pOpacityImage)
+        if (pOpacityImage && pOpacityImage->texture().Get())
         {
             std::string debugName = pOpacityImage->texture().Get()->GetDescriptor().debugName;
             int imageId = findTexture(debugName);
@@ -312,7 +317,7 @@ void HGIScene::rebuildInstanceList()
         {
             pNormalImage = dynamic_pointer_cast<HGIImage>(pMtl->textures().getTexture("normal_image"));
         }
-        if (pNormalImage)
+        if (pNormalImage && pNormalImage->texture().Get())
         {
             std::string debugName = pNormalImage->texture().Get()->GetDescriptor().debugName;
             int imageId = findTexture(debugName);
@@ -335,7 +340,6 @@ void HGIScene::rebuildInstanceList()
         else
             record.normalTextureIndex = kInvalidTextureIndex;
 
-#ifdef __APPLE__
         // Get emission image from material.
         HGIImagePtr pEmissionImage = nullptr;
         if (pMtl->textures().findTexture("emission_color_image") != -1)
@@ -364,7 +368,6 @@ void HGIScene::rebuildInstanceList()
         }
         else
             record.emissionTextureIndex = kInvalidTextureIndex;
-#endif
         
         
         _lstInstances.push_back({ instance, record });
@@ -420,7 +423,9 @@ void HGIScene::rebuildAccelerationStructure()
     HgiBufferDesc instanceDataUboDesc;
     instanceDataUboDesc.debugName = "Raytracing instance global data UBO";
     instanceDataUboDesc.usage     = HgiBufferUsageUniform;
-    instanceDataUboDesc.byteSize  = sizeof(InstanceShaderRecord) * _lstInstances.size();
+    // A scene can have no instances; Hgi rejects zero-sized buffers, so keep room for one unused record.
+    instanceDataUboDesc.byteSize =
+        sizeof(InstanceShaderRecord) * (_lstInstances.empty() ? 1 : _lstInstances.size());
     _instanceDataUbo = HgiBufferHandleWrapper::create(_pRenderer->hgi()->CreateBuffer(instanceDataUboDesc), _pRenderer->hgi());
     
     // Create per instance data buffer
@@ -459,6 +464,7 @@ void HGIScene::rebuildResourceBindings()
     // Create resource bindings (binding indices must match
     // HgiRayTracingPipelineDescriptorSetLayoutDesc created in createPipeline.)
     HgiResourceBindingsDesc resourceBindingsDesc;
+#if defined(__APPLE__)
     resourceBindingsDesc.debugName = "Scene Resource Bindings";
     // One acceleration structure resource.
     resourceBindingsDesc.accelerationStructures.resize(1);
@@ -495,15 +501,21 @@ void HGIScene::rebuildResourceBindings()
     }
     else
     {
-        // Add textures+samplers to pipeline, to avoid empty texture array.
+        // Add textures+samplers to pipeline, to avoid empty texture array. Fall back to the
+        // default image when an entry has no valid handle.
         for (size_t i = 0; i < _lstImages.size(); i++)
         {
-            resourceBindingsDesc.textures[1].textures.push_back(_lstImages[i]->texture());
+            auto texHandle = (_lstImages[i] && _lstImages[i]->texture().Get())
+                ? _lstImages[i]->texture()
+                : _pDefaultImage->handle();
+            resourceBindingsDesc.textures[1].textures.push_back(texHandle);
             resourceBindingsDesc.textures[1].samplers.push_back(_lstSamplers[i] ? _lstSamplers[i]->sampler() : _pRenderer->sampler());
         }
     }
     resourceBindingsDesc.textures[1].resourceType = HgiBindResourceTypeCombinedSamplerImage;
-    resourceBindingsDesc.textures[1].stageUsage   = HgiShaderStageClosestHit;
+    // Material evaluation runs in ray gen stage, must sync with rebuildPipeline().
+    resourceBindingsDesc.textures[1].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
 
     // Add resource for default sampler resource.
 #if __APPLE__
@@ -561,7 +573,8 @@ void HGIScene::rebuildResourceBindings()
     //  - environment data UBO
     //  - materials data UBO
     //  - instance data UBO
-    resourceBindingsDesc.buffers.resize(5);
+    //  - (optional) light image UBO
+    resourceBindingsDesc.buffers.resize(pLightImage ? 5 : 4);
     resourceBindingsDesc.buffers[0].bindingIndex = 2;
     resourceBindingsDesc.buffers[0].buffers      = { _pRenderer->frameDataUbo() };
     resourceBindingsDesc.buffers[0].offsets      = { 0 };
@@ -578,7 +591,7 @@ void HGIScene::rebuildResourceBindings()
     resourceBindingsDesc.buffers[2].resourceType = HgiBindResourceTypeUniformBuffer;
     resourceBindingsDesc.buffers[2].stageUsage =
         HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
-        
+
     resourceBindingsDesc.buffers[3].bindingIndex = 10;
     resourceBindingsDesc.buffers[3].buffers      = { instanceDataUbo() };
     resourceBindingsDesc.buffers[3].offsets      = { 0 };
@@ -593,6 +606,117 @@ void HGIScene::rebuildResourceBindings()
         resourceBindingsDesc.buffers[4].stageUsage   = HgiShaderStageRayGen | HgiShaderStageClosestHit;
     }
     
+#else
+    // Vulkan remaps binding indices by resource type: acceleration structures first, then buffers,
+    // then textures. The indices below are group-relative and map to shader bindings as:
+    //     accel 0 -> 0 | buffers 0..3 -> 1..4 | textures 0..4 -> 5..9
+    // This differs from Metal which uses absolute indices, requiring separate code paths.
+    resourceBindingsDesc.debugName = "Scene Resource Bindings";
+
+    // Acceleration structure -> binding 0.
+    resourceBindingsDesc.accelerationStructures.resize(1);
+    resourceBindingsDesc.accelerationStructures[0].bindingIndex           = 0;
+    resourceBindingsDesc.accelerationStructures[0].accelerationStructures = { tlas() };
+    resourceBindingsDesc.accelerationStructures[0].resourceType =
+        HgiBindResourceTypeAccelerationStructure;
+    resourceBindingsDesc.accelerationStructures[0].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit;
+
+    // Buffers -> bindings 1..4.
+    resourceBindingsDesc.buffers.resize(4);
+    // Frame data UBO -> binding 1.
+    resourceBindingsDesc.buffers[0].bindingIndex = 0;
+    resourceBindingsDesc.buffers[0].buffers      = { _pRenderer->frameDataUbo() };
+    resourceBindingsDesc.buffers[0].offsets      = { 0 };
+    resourceBindingsDesc.buffers[0].resourceType = HgiBindResourceTypeUniformBuffer;
+    resourceBindingsDesc.buffers[0].stageUsage   = HgiShaderStageRayGen | HgiShaderStageClosestHit;
+    // Sample data UBO -> binding 2.
+    resourceBindingsDesc.buffers[1].bindingIndex = 1;
+    resourceBindingsDesc.buffers[1].buffers      = { _pRenderer->sampleDataUbo() };
+    resourceBindingsDesc.buffers[1].offsets      = { 0 };
+    resourceBindingsDesc.buffers[1].resourceType = HgiBindResourceTypeUniformBuffer;
+    resourceBindingsDesc.buffers[1].stageUsage   = HgiShaderStageRayGen | HgiShaderStageClosestHit;
+    // Environment UBO -> binding 3.
+    resourceBindingsDesc.buffers[2].bindingIndex = 2;
+    resourceBindingsDesc.buffers[2].buffers      = { pEnvironment->ubo() };
+    resourceBindingsDesc.buffers[2].offsets      = { 0 };
+    resourceBindingsDesc.buffers[2].resourceType = HgiBindResourceTypeUniformBuffer;
+    resourceBindingsDesc.buffers[2].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Environment alias map -> binding 4. Falls back to a one-entry placeholder when there is no
+    // light image; sampleEnvironment() only reads it when the environment has a light texture.
+    resourceBindingsDesc.buffers[3].bindingIndex = 3;
+    resourceBindingsDesc.buffers[3].buffers      = { pLightImage ? pLightImage->aliasMap()
+                                                                 : _pDefaultAliasMap->handle() };
+    resourceBindingsDesc.buffers[3].offsets      = { 0 };
+    resourceBindingsDesc.buffers[3].resourceType = HgiBindResourceTypeStorageBuffer;
+    resourceBindingsDesc.buffers[3].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+
+    // Textures -> bindings 5..9.
+    resourceBindingsDesc.textures.resize(5);
+    // Output storage image -> binding 5.
+    resourceBindingsDesc.textures[0].bindingIndex = 0;
+    resourceBindingsDesc.textures[0].writable     = true;
+    resourceBindingsDesc.textures[0].textures     = { _pRenderer->directTex() };
+    resourceBindingsDesc.textures[0].samplers     = { _pRenderer->sampler() };
+    resourceBindingsDesc.textures[0].resourceType = HgiBindResourceTypeStorageImage;
+    resourceBindingsDesc.textures[0].stageUsage   = HgiShaderStageRayGen;
+    // Texture + sampler array shared by all instances -> binding 6.
+    resourceBindingsDesc.textures[1].bindingIndex = 1;
+    if (_lstImages.empty())
+    {
+        // Bind the default texture+sampler so the array is never empty.
+        resourceBindingsDesc.textures[1].textures.push_back(_pDefaultImage->handle());
+        resourceBindingsDesc.textures[1].samplers.push_back(_pRenderer->sampler());
+    }
+    else
+    {
+        // Fall back to the default image when an entry has no valid handle.
+        for (size_t i = 0; i < _lstImages.size(); i++)
+        {
+            auto texHandle = (_lstImages[i] && _lstImages[i]->texture().Get())
+                ? _lstImages[i]->texture()
+                : _pDefaultImage->handle();
+            resourceBindingsDesc.textures[1].textures.push_back(texHandle);
+            resourceBindingsDesc.textures[1].samplers.push_back(
+                _lstSamplers[i] ? _lstSamplers[i]->sampler() : _pRenderer->sampler());
+        }
+    }
+    resourceBindingsDesc.textures[1].resourceType = HgiBindResourceTypeCombinedSamplerImage;
+    // Material eval in ray gen stage requires visibility; sync with rebuildPipeline().
+    resourceBindingsDesc.textures[1].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Default sampler -> binding 7.
+    resourceBindingsDesc.textures[2].bindingIndex = 2;
+    resourceBindingsDesc.textures[2].textures     = { _pDefaultImage->handle() };
+    resourceBindingsDesc.textures[2].samplers     = { _pRenderer->sampler() };
+    resourceBindingsDesc.textures[2].resourceType = HgiBindResourceTypeSampler;
+    resourceBindingsDesc.textures[2].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Background image -> binding 8.
+    resourceBindingsDesc.textures[3].bindingIndex = 3;
+    resourceBindingsDesc.textures[3].textures     = { pBackgroundImage ? pBackgroundImage->texture()
+                                                                       : _pDefaultImage->handle() };
+    resourceBindingsDesc.textures[3].samplers     = { _pRenderer->sampler() };
+    resourceBindingsDesc.textures[3].resourceType = HgiBindResourceTypeSampledImage;
+    resourceBindingsDesc.textures[3].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Environment light image -> binding 9.
+    resourceBindingsDesc.textures[4].bindingIndex = 4;
+    resourceBindingsDesc.textures[4].textures     = { pLightImage ? pLightImage->texture()
+                                                                  : _pDefaultImage->handle() };
+    resourceBindingsDesc.textures[4].samplers     = { _pRenderer->sampler() };
+    resourceBindingsDesc.textures[4].resourceType = HgiBindResourceTypeSampledImage;
+    resourceBindingsDesc.textures[4].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+
+    // Accumulation image, instance data UBO, and environment alias map are omitted:
+    // ray tracing shaders don't declare them, and undeclared bindings make the pipeline
+    // incompatible, causing vkCmdTraceRaysKHR to silently fail.
+
+#endif
+
     // Create the resource bindings.
     auto& hgi    = _pRenderer->hgi();
     _resBindings = HgiResourceBindingsHandleWrapper::create(
@@ -622,6 +746,18 @@ void HGIScene::createResources()
     defaultTexDesc.usage          = HgiTextureUsageBitsShaderRead;
     _pDefaultImage = HgiTextureHandleWrapper::create(hgi->CreateTexture(defaultTexDesc), hgi);
 
+#if !defined(__APPLE__)
+    // Default alias map entry for Vulkan compatibility.
+    const uint32_t defaultAliasMapEntry[4] = { 0, 0, 0, 0 };
+    HgiBufferDesc defaultAliasMapDesc;
+    defaultAliasMapDesc.debugName   = "Default Alias Map";
+    defaultAliasMapDesc.usage       = HgiBufferUsageUniform | HgiBufferUsageStorage;
+    defaultAliasMapDesc.byteSize    = sizeof(defaultAliasMapEntry);
+    defaultAliasMapDesc.initialData = defaultAliasMapEntry;
+    _pDefaultAliasMap =
+        HgiBufferHandleWrapper::create(hgi->CreateBuffer(defaultAliasMapDesc), hgi);
+#endif
+
     string transpilerErrors;
     // Common shader declarations required by all stages.
     string shaderDeclarations;
@@ -633,13 +769,55 @@ void HGIScene::createResources()
     // Transpile the main entry point shader.
     string mainEntryPointSource = CommonShaders::g_sMainEntryPoints;
 
+    // HGI requires inline material evaluation in all stages since runtime linking is unsupported.
+    std::map<string, string> hgiBaseDefs = {
+        { "ENABLE_RUNTIME_COMPILE_EVALUATE_MATERIAL_FUNCTION", "0" }
+    };
+
+    // Split and insert GLSL suffix so that geometry and material definitions are accessible.
+    auto insertInstanceDataGlsl = [](string& glsl) {
+        static const string kMarker = "#define AURORA_SPLIT_REQUIRES_TRANSPILED_TYPES";
+        const string& suffix        = HGIShaders::g_sInstanceData;
+
+        const size_t markerPos = suffix.find(kMarker);
+        const string prologue =
+            (markerPos == string::npos) ? string() : suffix.substr(0, markerPos);
+        const string epilogue = (markerPos == string::npos)
+            ? suffix
+            : suffix.substr(markerPos + kMarker.size());
+
+        // Insert epilogue after MaterialConstants_0 struct, or append if not found.
+        static const string kStruct = "struct MaterialConstants_0";
+        size_t epiloguePos          = glsl.size();
+        const size_t structPos      = glsl.find(kStruct);
+        if (structPos != string::npos)
+        {
+            const size_t structEnd = glsl.find("\n};", structPos);
+            if (structEnd != string::npos)
+            {
+                epiloguePos = structEnd + 3;
+            }
+        }
+        glsl.insert(epiloguePos, "\n" + epilogue);
+
+        // Prologue goes directly after the #version line.
+        const size_t versionEnd = glsl.find('\n');
+        glsl.insert((versionEnd == string::npos) ? 0 : versionEnd + 1, prologue);
+    };
+
     // Create the ray generation shader description including transpiled GLSL source.
+    // IMPORTANT: Do NOT force ENABLE_RUNTIME_COMPILE_EVALUATE_MATERIAL_FUNCTION=0 for ray gen/miss
+    // shaders -- with =0, Slang declares textureSamplers (binding 3) in those stages even though
+    // material evaluation never runs there.  That declaration conflicts with the binding stage mask
+    // (which only authorises binding 3 for closest-hit) and crashes the Vulkan driver.
     string rayGenShaderCode;
     // HgiRenderer can only have one main entry point for each shader source.
     // Disable the rest of the shader stages and use the ray generation shader.
-    std::map<string, string> rayGenPreDefs = { { "DISABLE_HGI_SHADER_STAGE_MISS", "1" },
-                                               { "DISABLE_HGI_SHADER_STAGE_CLOSEST_HIT", "1" },
-                                               { "DISABLE_HGI_SHADER_STAGE_ANY_HIT", "1" } };
+    std::map<string, string> rayGenPreDefs = hgiBaseDefs;
+    rayGenPreDefs.insert({ { "DISABLE_HGI_SHADER_STAGE_MISS", "1" },
+                           { "DISABLE_HGI_SHADER_STAGE_INSTANCE_MISS", "1" },
+                           { "DISABLE_HGI_SHADER_STAGE_CLOSEST_HIT", "1" },
+                           { "DISABLE_HGI_SHADER_STAGE_ANY_HIT", "1" } });
     if (!transpiler->transpileCode(
             mainEntryPointSource, rayGenShaderCode, transpilerErrors, Transpiler::Language::GLSL, rayGenPreDefs))
     {
@@ -648,7 +826,7 @@ void HGIScene::createResources()
         AU_FAIL("Slang transpiling failed, see log in console for details.");
     }
 
-    rayGenShaderCode += HGIShaders::g_sInstanceData;
+    insertInstanceDataGlsl(rayGenShaderCode);
     string rayGenShaderDeclarations = shaderDeclarations;
     HgiShaderFunctionDesc raygenShaderDesc;
     raygenShaderDesc.debugName              = "RayGenShader";
@@ -675,9 +853,11 @@ void HGIScene::createResources()
     // Create the shadow miss shader description including GLSL source.
     string shadowMissShaderCode;
     // Disable the rest of the shader stages and use the shadow miss shader.
-    std::map<string, string> shadowMissPreDefs = { { "DISABLE_HGI_SHADER_STAGE_RAY_GEN", "1" },
-                                                   { "DISABLE_HGI_SHADER_STAGE_CLOSEST_HIT", "1" },
-                                                   { "DISABLE_HGI_SHADER_STAGE_ANY_HIT", "1" } };
+    std::map<string, string> shadowMissPreDefs = hgiBaseDefs;
+    shadowMissPreDefs.insert({ { "DISABLE_HGI_SHADER_STAGE_RAY_GEN", "1" },
+                               { "DISABLE_HGI_SHADER_STAGE_INSTANCE_MISS", "1" },
+                               { "DISABLE_HGI_SHADER_STAGE_CLOSEST_HIT", "1" },
+                               { "DISABLE_HGI_SHADER_STAGE_ANY_HIT", "1" } });
     if (!transpiler->transpileCode(
             mainEntryPointSource, shadowMissShaderCode, transpilerErrors, Transpiler::Language::GLSL, shadowMissPreDefs))
     {
@@ -685,6 +865,10 @@ void HGIScene::createResources()
         AU_DEBUG_BREAK();
         AU_FAIL("Slang transpiling failed, see log in console for details.");
     }
+
+    // The miss shader does not evaluate materials, but DefaultMaterial.slang marks
+    // evaluateDefaultMaterial as export. Emit anyway and drag in the accessors.
+    insertInstanceDataGlsl(shadowMissShaderCode);
 
     string shadowMissShaderDeclarations = shaderDeclarations;
     HgiShaderFunctionDesc shadowMissShaderDesc;
@@ -704,12 +888,48 @@ void HGIScene::createResources()
         AU_FAIL("Shader function creation failed, see log in console for details.");
     }
 
+#if !defined(__APPLE__)
+    // Create the instance miss shader for primary rays that hit nothing.
+    string instanceMissShaderCode;
+    std::map<string, string> instanceMissPreDefs = hgiBaseDefs;
+    instanceMissPreDefs.insert({ { "DISABLE_HGI_SHADER_STAGE_RAY_GEN", "1" },
+                                 { "DISABLE_HGI_SHADER_STAGE_MISS", "1" },
+                                 { "DISABLE_HGI_SHADER_STAGE_CLOSEST_HIT", "1" },
+                                 { "DISABLE_HGI_SHADER_STAGE_ANY_HIT", "1" } });
+    if (!transpiler->transpileCode(mainEntryPointSource, instanceMissShaderCode, transpilerErrors,
+            Transpiler::Language::GLSL, instanceMissPreDefs))
+    {
+        AU_ERROR("Slang transpiling error on instance miss shader:\n%s", transpilerErrors.c_str());
+        AU_DEBUG_BREAK();
+        AU_FAIL("Slang transpiling failed, see log in console for details.");
+    }
+    insertInstanceDataGlsl(instanceMissShaderCode);
+
+    string instanceMissShaderDeclarations = shaderDeclarations;
+    HgiShaderFunctionDesc instanceMissShaderDesc;
+    instanceMissShaderDesc.debugName              = "InstanceMissShader";
+    instanceMissShaderDesc.shaderStage            = HgiShaderStageMiss;
+    instanceMissShaderDesc.shaderCode             = instanceMissShaderCode.c_str();
+    instanceMissShaderDesc.shaderCodeDeclarations = instanceMissShaderDeclarations.c_str();
+    _instanceMissShaderFunc =
+        HgiShaderFunctionHandleWrapper::create(hgi->CreateShaderFunction(instanceMissShaderDesc), hgi);
+    if (!_instanceMissShaderFunc->handle()->IsValid())
+    {
+        std::string logString = _instanceMissShaderFunc->handle()->GetCompileErrors();
+        AU_ERROR("Error creating shader function for InstanceMissShader:\n%s", logString.c_str());
+        AU_DEBUG_BREAK();
+        AU_FAIL("Shader function creation failed, see log in console for details.");
+    }
+#endif
+
     // Create the closest hit shader description, appending the the raw instance data GLSL code.
     string closestHitShaderCode;
     // Disable the rest of the shader stages and use the closest hit shader.
-    std::map<string, string> closestHitPreDefs = { { "DISABLE_HGI_SHADER_STAGE_RAY_GEN", "1" },
-                                                  { "DISABLE_HGI_SHADER_STAGE_MISS", "1" },
-                                                  { "DISABLE_HGI_SHADER_STAGE_ANY_HIT", "1" } };
+    std::map<string, string> closestHitPreDefs = hgiBaseDefs;
+    closestHitPreDefs.insert({ { "DISABLE_HGI_SHADER_STAGE_RAY_GEN", "1" },
+                               { "DISABLE_HGI_SHADER_STAGE_MISS", "1" },
+                               { "DISABLE_HGI_SHADER_STAGE_INSTANCE_MISS", "1" },
+                               { "DISABLE_HGI_SHADER_STAGE_ANY_HIT", "1" } });
     if (!transpiler->transpileCode(
         mainEntryPointSource, closestHitShaderCode, transpilerErrors, Transpiler::Language::GLSL, closestHitPreDefs))
     {
@@ -718,7 +938,7 @@ void HGIScene::createResources()
         AU_FAIL("Slang transpiling failed, see log in console for details.");
     }
 
-    closestHitShaderCode += HGIShaders::g_sInstanceData;
+    insertInstanceDataGlsl(closestHitShaderCode);
     string closestHitShaderDeclarations = shaderDeclarations;
     HgiShaderFunctionDesc closestHitShaderDesc;
     closestHitShaderDesc.debugName              = "ClosestHitShader";
@@ -761,6 +981,7 @@ void HGIScene::rebuildPipeline()
     //   - background image
     //   - light image
     HgiRayTracingPipelineDescriptorSetLayoutDesc layoutBinding;
+#if defined(__APPLE__)
     layoutBinding.resourceBinding.resize(12);
     // Description of acceleration structure.
     layoutBinding.resourceBinding[0].bindingIndex = 0;
@@ -782,7 +1003,8 @@ void HGIScene::rebuildPipeline()
     layoutBinding.resourceBinding[3].bindingIndex = 3;
     layoutBinding.resourceBinding[3].count = _lstImages.empty() ? 1 : (uint32_t)_lstImages.size();
     layoutBinding.resourceBinding[3].resourceType = HgiBindResourceTypeCombinedSamplerImage;
-    layoutBinding.resourceBinding[3].stageUsage   = HgiShaderStageClosestHit;
+    layoutBinding.resourceBinding[3].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
     // Description of sample data UBO
     layoutBinding.resourceBinding[4].bindingIndex = 4;
     layoutBinding.resourceBinding[4].count        = 1;
@@ -828,20 +1050,94 @@ void HGIScene::rebuildPipeline()
     layoutBinding.resourceBinding[11].resourceType = HgiBindResourceTypeUniformBuffer;
     layoutBinding.resourceBinding[11].stageUsage   = HgiShaderStageRayGen;
 
+#else
+    // Binding indices used by HgiVulkanRayTracingPipeline; must match rebuildResourceBindings():
+    //   0 acceleration structure      5 output storage image
+    //   1 frame data UBO              6 texture + sampler array
+    //   2 sample data UBO             7 default sampler
+    //   3 environment UBO             8 background image
+    //   4 environment alias map       9 environment light image
+    layoutBinding.resourceBinding.resize(10);
+    // Acceleration structure.
+    layoutBinding.resourceBinding[0].bindingIndex = 0;
+    layoutBinding.resourceBinding[0].count        = 1;
+    layoutBinding.resourceBinding[0].resourceType = HgiBindResourceTypeAccelerationStructure;
+    layoutBinding.resourceBinding[0].stageUsage   = HgiShaderStageRayGen | HgiShaderStageClosestHit;
+    // Frame data UBO.
+    layoutBinding.resourceBinding[1].bindingIndex = 1;
+    layoutBinding.resourceBinding[1].count        = 1;
+    layoutBinding.resourceBinding[1].resourceType = HgiBindResourceTypeUniformBuffer;
+    layoutBinding.resourceBinding[1].stageUsage   = HgiShaderStageRayGen | HgiShaderStageClosestHit;
+    // Sample data UBO.
+    layoutBinding.resourceBinding[2].bindingIndex = 2;
+    layoutBinding.resourceBinding[2].count        = 1;
+    layoutBinding.resourceBinding[2].resourceType = HgiBindResourceTypeUniformBuffer;
+    layoutBinding.resourceBinding[2].stageUsage   = HgiShaderStageRayGen | HgiShaderStageClosestHit;
+    // Environment UBO.
+    layoutBinding.resourceBinding[3].bindingIndex = 3;
+    layoutBinding.resourceBinding[3].count        = 1;
+    layoutBinding.resourceBinding[3].resourceType = HgiBindResourceTypeUniformBuffer;
+    layoutBinding.resourceBinding[3].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Environment alias map (a StructuredBuffer in the shaders, so a storage buffer here).
+    layoutBinding.resourceBinding[4].bindingIndex = 4;
+    layoutBinding.resourceBinding[4].count        = 1;
+    layoutBinding.resourceBinding[4].resourceType = HgiBindResourceTypeStorageBuffer;
+    layoutBinding.resourceBinding[4].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Output direct light image.
+    layoutBinding.resourceBinding[5].bindingIndex = 5;
+    layoutBinding.resourceBinding[5].count        = 1;
+    layoutBinding.resourceBinding[5].resourceType = HgiBindResourceTypeStorageImage;
+    layoutBinding.resourceBinding[5].stageUsage   = HgiShaderStageRayGen;
+    // Array of textures and samplers shared by all instances; minimum size one.
+    layoutBinding.resourceBinding[6].bindingIndex = 6;
+    layoutBinding.resourceBinding[6].count = _lstImages.empty() ? 1 : (uint32_t)_lstImages.size();
+    layoutBinding.resourceBinding[6].resourceType = HgiBindResourceTypeCombinedSamplerImage;
+    layoutBinding.resourceBinding[6].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Default sampler.
+    layoutBinding.resourceBinding[7].bindingIndex = 7;
+    layoutBinding.resourceBinding[7].count        = 1;
+    layoutBinding.resourceBinding[7].resourceType = HgiBindResourceTypeSampler;
+    layoutBinding.resourceBinding[7].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Background image.
+    layoutBinding.resourceBinding[8].bindingIndex = 8;
+    layoutBinding.resourceBinding[8].count        = 1;
+    layoutBinding.resourceBinding[8].resourceType = HgiBindResourceTypeSampledImage;
+    layoutBinding.resourceBinding[8].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+    // Environment light image.
+    layoutBinding.resourceBinding[9].bindingIndex = 9;
+    layoutBinding.resourceBinding[9].count        = 1;
+    layoutBinding.resourceBinding[9].resourceType = HgiBindResourceTypeSampledImage;
+    layoutBinding.resourceBinding[9].stageUsage =
+        HgiShaderStageRayGen | HgiShaderStageClosestHit | HgiShaderStageMiss;
+
+#endif
+
     // Create pipeline description.
     HgiRayTracingPipelineDesc pipelineDesc;
     pipelineDesc.debugName            = "Main Raytracing Pipeline";
     pipelineDesc.maxRayRecursionDepth = 10;
     pipelineDesc.descriptorSetLayouts.push_back(layoutBinding);
-    // 4 shaders (ray gen, shadow miss, closest hit and any hit)
+    // 3 shaders (ray gen, shadow miss, closest hit), plus the instance miss shader off Apple.
+#if defined(__APPLE__)
     pipelineDesc.shaders.resize(3);
-    //pipelineDesc.shaders.resize(4);
+#else
+    pipelineDesc.shaders.resize(4);
+#endif
     pipelineDesc.shaders[0].shader     = _rayGenShaderFunc->handle();
     pipelineDesc.shaders[0].entryPoint = "main";
     pipelineDesc.shaders[1].shader     = _shadowMissShaderFunc->handle();
     pipelineDesc.shaders[1].entryPoint = "main";
     pipelineDesc.shaders[2].shader     = _closestHitShaderFunc->handle();
     pipelineDesc.shaders[2].entryPoint = "main";
+#if !defined(__APPLE__)
+    pipelineDesc.shaders[3].shader     = _instanceMissShaderFunc->handle();
+    pipelineDesc.shaders[3].entryPoint = "main";
+#endif
     //pipelineDesc.shaders[3].shader     = _anyHitShaderFunc->handle();
     //pipelineDesc.shaders[3].entryPoint = "main";
 
@@ -850,14 +1146,26 @@ void HGIScene::rebuildPipeline()
 #ifdef __APPLE__
     pipelineDesc.groups.resize(2 + _lstInstances.size() * 7);
 #else
-    pipelineDesc.groups.resize(2 + _lstInstances.size());
+    // One ray gen group plus three miss groups (see below), then one group per instance.
+    pipelineDesc.groups.resize(4 + _lstInstances.size());
 #endif
     // Ray gen shader group.
     pipelineDesc.groups[0].type          = HgiRayTracingShaderGroupTypeGeneral;
     pipelineDesc.groups[0].generalShader = 0; // Index within shader array above.
+#if defined(__APPLE__)
     // Shadow miss shader group.
     pipelineDesc.groups[1].type          = HgiRayTracingShaderGroupTypeGeneral;
     pipelineDesc.groups[1].generalShader = 1; // Index within shader array above.
+#else
+    // HgiVulkan requires miss groups in order: kMissNull=0, kMissInstance=1, kMissShadow=2.
+    // Slot 0 is unused (traceShadowRay uses kMissShadow), so it reuses the shadow miss shader.
+    pipelineDesc.groups[1].type          = HgiRayTracingShaderGroupTypeGeneral;
+    pipelineDesc.groups[1].generalShader = 1; // kMissNull  -> shadow miss (unused)
+    pipelineDesc.groups[2].type          = HgiRayTracingShaderGroupTypeGeneral;
+    pipelineDesc.groups[2].generalShader = 3; // kMissInstance -> instance miss
+    pipelineDesc.groups[3].type          = HgiRayTracingShaderGroupTypeGeneral;
+    pipelineDesc.groups[3].generalShader = 1; // kMissShadow   -> shadow miss
+#endif
     // Triangle shader groups for each instance.
     for (size_t i = 0; i < _lstInstances.size(); i++)
     {
@@ -903,13 +1211,15 @@ void HGIScene::rebuildPipeline()
         pipelineDesc.groups[2 + i * 7 + 6].shaderRecordLength = shaderRecordStride;
 #else
         size_t shaderRecordStride = sizeof(_lstInstances[i].shaderRecord);
-        // Triangle miss shader group with closest hit shader.
-        pipelineDesc.groups[2 + i].type             = HgiRayTracingShaderGroupTypeTriangles;
-        pipelineDesc.groups[2 + i].closestHitShader = 2; // Index within shader array above.
+        // Triangle hit group. These follow the ray gen and three miss groups; their ordinal
+        // within the hit region (which is what the instance SBT offset selects) is still i.
+        const size_t groupIndex = 4 + i;
+        pipelineDesc.groups[groupIndex].type             = HgiRayTracingShaderGroupTypeTriangles;
+        pipelineDesc.groups[groupIndex].closestHitShader = 2; // Index within shader array above.
         // Add the hit group record structure to the shader record (this will copied after the
         // shader handle in the shader binding table.)
-        pipelineDesc.groups[2 + i].pShaderRecord      = &_lstInstances[i].shaderRecord;
-        pipelineDesc.groups[2 + i].shaderRecordLength = shaderRecordStride;
+        pipelineDesc.groups[groupIndex].pShaderRecord      = &_lstInstances[i].shaderRecord;
+        pipelineDesc.groups[groupIndex].shaderRecordLength = shaderRecordStride;
 #endif
         // TODO: Triangle miss shader group with any hit shader.
     }
@@ -917,6 +1227,9 @@ void HGIScene::rebuildPipeline()
     // Create the pipeline.
     _rayTracingPipeline = HgiRayTracingPipelineHandleWrapper::create(
         hgi->CreateRayTracingPipeline(pipelineDesc), hgi);
+    // Assert prevents silent pipeline creation failures.
+    AU_ASSERT(_rayTracingPipeline->handle().Get() != nullptr,
+        "Failed to create the ray tracing pipeline.");
 }
 
 ILightPtr HGIScene::addLightPointer(const string& lightType)

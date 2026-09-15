@@ -86,6 +86,20 @@ std::string replace(
     return res;
 }
 
+std::vector<std::string> split(const std::string& str, char delimiter)
+{
+    std::vector<std::string> tokens;
+    size_t start = 0;
+    size_t end;
+    while ((end = str.find(delimiter, start)) != std::string::npos)
+    {
+        tokens.push_back(str.substr(start, end - start));
+        start = end + 1;
+    }
+    tokens.push_back(str.substr(start));
+    return tokens;
+}
+
 std::string getModulePath()
 {
 #if defined(WIN32)
@@ -108,10 +122,11 @@ std::string getModulePath()
 
 #else
     Dl_info info;
-    std::string tempBuf("/");
-    if (dladdr((void*)getModulePath, &info))
+    std::string tempBuf;
+    if (dladdr((void*)getModulePath, &info) && info.dli_fname)
     {
-        tempBuf += info.dli_fname;
+        // dli_fname is already the module's full path. No need to prepend an additional '/'.
+        tempBuf = info.dli_fname;
     }
     else
     {
@@ -119,16 +134,22 @@ std::string getModulePath()
     }
 #endif
 
+#if defined(WIN32)
+    // Normalise to the native separator.
     size_t charOffset = tempBuf.find('/');
     while (charOffset != std::string::npos)
     {
         tempBuf.replace(charOffset, 1, "\\");
         charOffset = tempBuf.find('/');
     }
+    charOffset = tempBuf.rfind('\\');
+#else
+    // No need to normalize POSIX paths.
+    size_t charOffset = tempBuf.rfind('/');
+#endif
 
     // runTimeDir contains path up to executable name
     // Remove the executable name.
-    charOffset = tempBuf.rfind(L'\\');
     if (charOffset != std::string::npos)
         tempBuf.erase(charOffset + 1, (tempBuf.length() - charOffset) - 1);
     return tempBuf;

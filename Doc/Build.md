@@ -7,7 +7,7 @@ Several prerequisites must be installed before building Aurora.
 ### Windows
 On windows the following packages should be installed and added to the system PATH environment variable:
 * [Microsoft Visual Studio 2022](https://my.visualstudio.com/Downloads?q=visual%20studio%202022).
-* CMake 3.29.3 or later ([installer](https://github.com/Kitware/CMake/releases/download/v3.29.7/cmake-3.29.7-windows-x86_64.msi)).
+* CMake 3.30 or later ([installer](https://github.com/Kitware/CMake/releases/download/v3.30.9/cmake-3.30.9-windows-x86_64.msi)).
 * Python 3.11 or later ([installer](https://www.python.org/downloads/release/python-3119/)) and the following Python packages:
   * PySide6: install with `pip3 install PySide6`.
   * PyOpenGL: install with `pip3 install PyOpenGL`.
@@ -18,7 +18,7 @@ On windows the following packages should be installed and added to the system PA
 
 ### MacOS
 The following tools should be installed and accessible through PATH environment variable:
-* Xcode 15.4 or later.
+* Xcode 16.3 or later.
   * Xcode Command Line Tools: install by running `xcode-select --install`.
 * Git with LFS: set up by running `git lfs install`.
 * CMake 3.29.3 or later ([installer](https://github.com/Kitware/CMake/releases/download/v3.29.7/cmake-3.29.7-macos-universal.dmg)).
@@ -31,7 +31,7 @@ The following tools should be installed and accessible through PATH environment 
 ### Linux
 On Ubuntu 24.04 or later, the dependencies can be installed with the following Advanced Package Tool command:
 ```
-sudo apt-get -y install zlib1g-dev libjpeg-turbo8-dev libtiff-dev libpng-dev libglm-dev libglew-dev libglfw3-dev libgtest-dev libgmock-dev libxt-dev
+sudo apt-get -y install zlib1g-dev libjpeg-turbo8-dev libtiff-dev libpng-dev libglm-dev libglew-dev libglfw3-dev libgtest-dev libgmock-dev libxt-dev libxinerama-dev libxi-dev libxrandr-dev libshaderc-dev
 ```
 
 Required tools:
@@ -40,7 +40,21 @@ Required tools:
 * CMake(3.29.3 or later).
 * Python(3.11 or later).
   * PySide6, PyOpenGL, Jinja2.
-* [VulkanSDK](https://vulkan.lunarg.com/). It should be accessible via the `VULKAN_SDK` environment variable, so you may need to manually install it rather than through a package tool.
+* Vulkan. USD gates its Vulkan support on `VULKAN_SDK` pointing at an existing directory, so the
+  variable must be set even when the distro packages are used. Either install the
+  [LunarG SDK](https://vulkan.lunarg.com/) and source its `setup-env.sh`, or use the packages
+  listed above and `export VULKAN_SDK=/usr`. Several details matter on Ubuntu 24.04:
+  * The Vulkan headers must be recent enough for `VkPhysicalDeviceLineRasterizationFeaturesKHR`
+    (1.3.286+). Ubuntu ships 1.3.275, so add the [LunarG apt repository](https://packages.lunarg.com/).
+  * VulkanMemoryAllocator 3.2 or newer is required (`VmaAllocationInfo2`,
+    `vmaCopyMemoryToAllocation`); Ubuntu's `libvulkan-memory-allocator-dev` is 3.0.1 and too old.
+    USD includes it as `vma/vk_mem_alloc.h`, so it must be reachable at exactly that path.
+  * `vulkan-utility-libraries-dev` is also needed — hgiVulkan's diagnostics include
+    `vulkan/vk_enum_string_helper.h`, which is not part of the core headers.
+  * Use LunarG's `shaderc` package, not Ubuntu's `libshaderc-dev`. Debian unbundles glslang and
+    SPIRV-Tools from `libshaderc_combined.a`, which leaves `libusd_hgiVulkan.so` with undefined
+    `glslang::`/`spvtools::` symbols and breaks every consumer's link. The packages conflict, so
+    remove `libshaderc-dev` first.
 
 ## Building Aurora
 
@@ -85,7 +99,7 @@ Aurora includes a script that retrieves and builds dependencies ("externals") fr
 
    - On Windows, `CMAKE_BUILD_TYPE` is ignored during the cmake configuration. You are required to specify the build configuration with `--config {CONFIGURATION}` during the cmake build.
 
-   - You can optionally specify the desired graphics API backend as described below, e.g. `-D ENABLE_HGI_BACKEND=ON`. Note that Plasma with Vulkan backend does not support interactive mode yet. If more than one backend is enabled, you can designate the desired one, e.g. `--renderer hgi`, when executing Plasma.
+   - You can optionally specify the desired graphics API backend as described below, e.g. `-D ENABLE_HGI_BACKEND=ON`. Note that interactive Plasma is only built on Windows and macOS; on Linux Plasma is always headless. If more than one backend is enabled, you can designate the desired one, e.g. `--renderer hgi`, when executing Plasma.
 
    - You can optionally disable Plasma with `-D ENABLE_APPLICATIONS=OFF`, which is enabled by default.
 
@@ -113,6 +127,24 @@ On Windows, you can set a flag in the CMake configuration to enable the desired 
 - `-D ENABLE_HGI_BACKEND=[ON/OFF]` for Vulkan (default is OFF).
 
 On Linux and MacOS,  `ENABLE_HGI_BACKEND` is `ON` and `ENABLE_DIRECTX_BACKEND` is `OFF` and cannot be changed.
+
+## Optional Features
+
+These are compiled in or out, so they are chosen at CMake configure time. All of them are DirectX-only and are ignored by the Vulkan and Metal backends.
+
+| Option | Default | Notes |
+|---|---|---|
+| `ENABLE_DENOISER` | `ON` | DirectX backend: NVIDIA NRD real-time denoising. Requires NRD and NRI. |
+| `ENABLE_UPSCALER` | `OFF` | DirectX backend: NVIDIA DLSS and AMD FSR upscaling. Requires DLSS and FSR SDKs (~320 MB installed). |
+| `ENABLE_EXPERIMENTAL_MDL` | `OFF` | Compiles MaterialX through the NVIDIA MDL SDK instead of the default Slang generator. Requires `ENABLE_MATERIALX=ON`. |
+
+The matching externals must be installed for each, so pass the corresponding flag to *installExternals.py*:
+
+```
+python Scripts/installExternals.py {EXTERNALS_ROOT} --enable-upscaler --enable-mdl
+```
+
+NRD and NRI are installed unconditionally on non-Apple platforms; `--enable-upscaler` adds DLSS and FSR, and `--enable-mdl` adds the MDL SDK. Configuring with a feature enabled but its externals missing fails at `find_package` time.
 
 Vulkan and Metal support are provided through USD Hydra's "HGI" interface, using a prototype extension for ray tracing available in [this branch of the Autodesk fork of USD](https://github.com/autodesk-forks/USD/tree/adsk/feature/hgiraytracing). For this reason, USD is required when compiling Aurora with the Vulkan or Metal backend. USD is built as part of the build process described above, to support both the HdAurora render delegate and backends.
 

@@ -1,4 +1,4 @@
-// Copyright 2025 Autodesk, Inc.
+// Copyright 2026 Autodesk, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,6 +35,9 @@ BufferType* getStagingAddress(HgiBufferHandleWrapper::Pointer& pBuffer)
     return getStagingAddress<BufferType>(pBuffer->handle());
 }
 
+// Forward declarations.
+class HGIWindow;
+
 // An rasterization (HGI) implementation for IRenderer.
 class HGIRenderer : public RendererBase
 {
@@ -65,7 +68,6 @@ public:
     void setTargets(const TargetAssignments& targetAssignments) override;
     void render(uint32_t sampleStart, uint32_t sampleCount) override;
     void waitForTask() override;
-    void setLoadResourceFunction(LoadResourceFunction) override {}
 
     const std::vector<std::string>& builtInMaterials() override;
     pxr::HgiUniquePtr& hgi() { return _hgi; }
@@ -95,7 +97,8 @@ public:
 private:
     void createResources();
     pxr::HgiUniquePtr _hgi;
-    HGIRenderBuffer* _pRenderBuffer;
+    HGIRenderBuffer* _pRenderBuffer = nullptr;
+    HGIWindow* _pWindow = nullptr;
     HgiBufferHandleWrapper::Pointer _frameDataUbo;
     HgiBufferHandleWrapper::Pointer _sampleDataUbo;
     HgiBufferHandleWrapper::Pointer _postProcessingUbo;
